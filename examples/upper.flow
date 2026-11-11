@@ -1,0 +1,5 @@
+doc: Uppercase a short text.
+inputs: {text: text}
+steps:
+  upper: {use: text.upper, in: {text: =inputs.text}}
+outputs: {text: =upper.text}

@@ -1,0 +1,13 @@
+doc: Count words and assemble a report from references inside an object and list.
+inputs: {text: text}
+steps:
+  words: {use: text.words, in: {text: =inputs.text}}
+  upper: {use: text.upper, in: {text: =inputs.text}}
+  report:
+    use: data.value
+    in:
+      value:
+        original: =inputs.text
+        count: =words.count
+        versions: [=inputs.text, =upper.text]
+outputs: {report: =report.value}

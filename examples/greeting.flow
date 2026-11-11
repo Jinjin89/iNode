@@ -1,0 +1,6 @@
+doc: Reuse upper as a node, then join its output with a greeting.
+inputs: {name: text}
+steps:
+  name: {use: upper, in: {text: =inputs.name}}
+  greeting: {use: text.join, in: {parts: [Hello, =name.text]}}
+outputs: {text: =greeting.text}
