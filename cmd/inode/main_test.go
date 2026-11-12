@@ -74,6 +74,8 @@ func TestCommands(t *testing.T) {
 		{[]string{"nodes"}, "upper\t", false},
 		{[]string{"show", "upper"}, `"no_outside_effect": true`, false},
 		{[]string{"check", "upper.flow"}, `"problems": []`, false},
+		{[]string{"check", `{"outputs":{"text":"hi"}}`}, `"problems": []`, false},
+		{[]string{"save", "draft", "", `{"outputs":{"text":"hi"}}`}, `"name": "draft"`, false},
 		{[]string{"run", "upper", "text=hi"}, `"text": "HI"`, false},
 		{[]string{"run", "text.upper", "text=123"}, `"text": "123"`, false},
 		{[]string{"run", "map", "over=[hi, yo]", "do=text.upper"}, `"YO"`, false},
@@ -131,7 +133,7 @@ func TestPluginCommands(t *testing.T) {
 		content string
 	}{
 		{[]string{"add", "tiny_plugin"}, "tiny\t1\nAdd a short greeting\nAccesses:\n- Reads and writes its own greeting file."},
-		{[]string{"plugins"}, "tiny\t1\ttrue\ttiny_plugin"},
+		{[]string{"plugins"}, "tiny\t1\tinstalled\ttiny_plugin"},
 		{[]string{"nodes"}, "tiny.greet\tGreet a name"},
 		{[]string{"show", "tiny.greet"}, `"name": "tiny.greet"`},
 		{[]string{"run", "tiny.greet", "name=cat"}, `"text": "hi cat"`},
@@ -145,7 +147,7 @@ func TestPluginCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out, diagnostic bytes.Buffer
-	if err := invokeCLI(context.Background(), []string{"plugins"}, &out, &diagnostic); err != nil || !strings.Contains(out.String(), "tiny\t1\tfalse\ttiny_plugin") {
+	if err := invokeCLI(context.Background(), []string{"plugins"}, &out, &diagnostic); err != nil || !strings.Contains(out.String(), "tiny\t1\tmissing\ttiny_plugin") {
 		t.Fatalf("missing: %s, %v", &out, err)
 	}
 	if err := invokeCLI(context.Background(), []string{"show", "tiny.greet"}, &out, &diagnostic); err == nil || !strings.Contains(err.Error(), "inode add tiny_plugin") {
@@ -205,7 +207,7 @@ func TestBackendLifecycleCommands(t *testing.T) {
 	}
 	out.Reset()
 	diagnostic.Reset()
-	if err := invokeCLI(ctx, []string{"start"}, &out, &diagnostic); err != nil || !strings.Contains(diagnostic.String(), "started backend") || !strings.Contains(out.String(), "backend running at http://127.0.0.1:") {
+	if err := invokeCLI(ctx, []string{"start"}, &out, &diagnostic); err != nil || !strings.Contains(diagnostic.String(), "started backend") || !strings.Contains(out.String(), "http://127.0.0.1:") {
 		t.Fatalf("explicit start: %s, %s, %v", &out, &diagnostic, err)
 	}
 }

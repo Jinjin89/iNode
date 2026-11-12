@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
+	"runtime"
 	"strings"
 	"syscall"
 
@@ -15,7 +17,7 @@ import (
 	"inode"
 )
 
-const usage = "usage: inode run <node> key=value ... | nodes | show <node> | check <workflow> | runs [show|stop|follow <id>] | add <path or git URL> | remove <plugin> | plugins | start | stop | help | version"
+const usage = "usage: inode run <node> key=value ... | nodes | show <node> | check <workflow or JSON> | save <workflow> <version> <JSON> | runs [show|stop|follow <id>] | add <path or git URL> | remove <plugin> | plugins | start | stop | help | version"
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -67,7 +69,22 @@ func command(ctx context.Context, args []string, out, diagnostic io.Writer) erro
 		fmt.Fprintln(diagnostic, "started backend for this project; use inode stop to stop it")
 	}
 	if operation == "start" {
-		_, err := fmt.Fprintf(out, "backend running at http://%s\n", client.Address)
+		url := "http://" + client.Address + "/#" + client.Credential
+		_, err := fmt.Fprintln(out, url)
+		if err != nil {
+			return err
+		}
+		var args []string
+		switch runtime.GOOS {
+		case "darwin":
+			args = []string{"open", url}
+		default:
+			args = []string{"xdg-open", url}
+		}
+		cmd := exec.Command(args[0], args[1:]...)
+		if err := cmd.Start(); err == nil {
+			go cmd.Wait()
+		}
 		return err
 	}
 	if operation == "run" {
@@ -76,9 +93,14 @@ func command(ctx context.Context, args []string, out, diagnostic io.Writer) erro
 	arguments := make([]any, len(rest))
 	for i, value := range rest {
 		arguments[i] = value
+		if strings.HasPrefix(value, "{") || strings.HasPrefix(value, "[") {
+			if err := json.Unmarshal([]byte(value), &arguments[i]); err != nil {
+				return err
+			}
+		}
 	}
 	err = client.Call(ctx, operation, arguments, func(data json.RawMessage) error {
-		columns := map[string][]string{"nodes": {"name", "doc"}, "runs": {"id", "node", "state"}, "plugins": {"name", "version", "installed", "source"}}[operation]
+		columns := map[string][]string{"nodes": {"name", "doc"}, "runs": {"id", "node", "state"}, "plugins": {"name", "version", "state", "source"}}[operation]
 		if len(columns) > 0 {
 			var rows []inode.Values
 			if err := json.Unmarshal(data, &rows); err != nil {
@@ -150,7 +172,7 @@ func run(ctx context.Context, client *inode.Client, args []string, out, diagnost
 	}
 	var id string
 	// Keep the acknowledgement so an interrupt can stop the accepted run.
-	if err := client.Call(context.WithoutCancel(ctx), "run", []any{args[0], inputs}, func(data json.RawMessage) error { return json.Unmarshal(data, &id) }); err != nil {
+	if err := client.Call(context.WithoutCancel(ctx), "run", []any{args[0], inputs, ""}, func(data json.RawMessage) error { return json.Unmarshal(data, &id) }); err != nil {
 		return err
 	}
 	var record inode.Record

@@ -56,7 +56,7 @@ func TestChecker(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			p := project(t, map[string]string{"x": test.flow})
-			report := p.Check("x.flow")
+			report := p.Check(Definition{Name: "x.flow"})
 			for _, problem := range report.Problems {
 				if problem.Step == test.step && problem.Input == test.input && strings.Contains(problem.Message, test.message) {
 					return
@@ -65,11 +65,11 @@ func TestChecker(t *testing.T) {
 			t.Fatalf("wanted %s / %s / %s; got %+v", test.step, test.input, test.message, report.Problems)
 		})
 	}
-	if problems := project(t, nil).Check("missing").Problems; len(problems) != 1 || problems[0].Input != "use" {
+	if problems := project(t, nil).Check(Definition{Name: "missing"}).Problems; len(problems) != 1 || problems[0].Input != "use" {
 		t.Fatalf("unknown root: %+v", problems)
 	}
 	p := project(t, map[string]string{"a": `steps: {b: {use: b}}`, "b": `steps: {a: {use: a}}`})
-	if report := p.Check("a"); !strings.Contains(Problems(report.Problems).Error(), "calls itself") {
+	if report := p.Check(Definition{Name: "a"}); !strings.Contains(Problems(report.Problems).Error(), "calls itself") {
 		t.Fatalf("indirect workflow cycle: %+v", report)
 	}
 }
@@ -169,7 +169,7 @@ func TestUncheckedEdges(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			p := project(t, map[string]string{"x": "steps:\n  source: {use: data.value, in: {value: " + test.value + "}}\n  upper: {use: text.upper, in: {text: =" + test.reference + "}}\noutputs: {text: =upper.text}"})
-			report := p.Check("x")
+			report := p.Check(Definition{Name: "x"})
 			if len(report.Problems) != 0 || len(report.Unchecked) == 0 {
 				t.Fatalf("unchecked connection: %+v", report)
 			}
@@ -342,7 +342,7 @@ steps:
   copy: {use: data.value, in: {value: {names: [=source.value.name]}}}
 outputs: {name: =source.value.name}
 `})
-	report := p.Check("x")
+	report := p.Check(Definition{Name: "x"})
 	if len(report.Problems) != 0 || len(report.Unchecked) != 2 || report.Unchecked[0].Input != "value.names.0" || report.Unchecked[1].Input != "outputs.name" {
 		t.Fatalf("unknown paths must remain visible inside containers and outputs: %+v", report)
 	}
@@ -373,7 +373,7 @@ func TestMalformedWorkflowsDoNotBlockHistory(t *testing.T) {
 		`inputs: {x: {type: text, defalt: hi}}`,
 	} {
 		p := project(t, map[string]string{"bad": source})
-		if report := p.Check("bad"); len(report.Problems) == 0 || report.Problems[0].Step != "bad" {
+		if report := p.Check(Definition{Name: "bad"}); len(report.Problems) == 0 || report.Problems[0].Step != "bad" {
 			t.Fatalf("malformed workflow not diagnosed: %+v", report)
 		}
 		run, err := p.Start(context.Background(), "text.upper", Values{"text": "hi"})

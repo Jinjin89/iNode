@@ -107,7 +107,7 @@ func TestBackendOperations(t *testing.T) {
 		}
 	}
 	var id string
-	if err := json.Unmarshal(request(t, client, "run", "upper", Values{"text": "hi"})[0], &id); err != nil {
+	if err := json.Unmarshal(request(t, client, "run", "upper", Values{"text": "hi"}, "")[0], &id); err != nil {
 		t.Fatal(err)
 	}
 	frames := request(t, client, "runs follow", id)
@@ -134,7 +134,7 @@ func TestBackendOperations(t *testing.T) {
 		t.Fatal("access disclosure not returned")
 	}
 	var plugins []Plugin
-	if err := json.Unmarshal(request(t, client, "plugins")[0], &plugins); err != nil || len(plugins) != 1 || !plugins[0].Installed {
+	if err := json.Unmarshal(request(t, client, "plugins")[0], &plugins); err != nil || len(plugins) != 1 || plugins[0].State != "installed" {
 		t.Fatalf("plugins: %+v, %v", plugins, err)
 	}
 	request(t, client, "remove", "tiny")
@@ -145,7 +145,7 @@ func TestBackendOperations(t *testing.T) {
 		op   string
 		args []any
 	}{
-		{"absent", nil}, {"show", nil}, {"show", []any{2}}, {"run", []any{"upper", Values{"extra": 1}}},
+		{"absent", nil}, {"show", nil}, {"show", []any{2}}, {"run", []any{"upper", Values{"extra": 1}, ""}},
 		{"runs show", []any{"absent"}}, {"runs stop", []any{"absent"}}, {"runs follow", []any{"absent"}},
 	} {
 		if err := client.Call(context.Background(), test.op, test.args, func(json.RawMessage) error { return nil }); err == nil {
@@ -171,7 +171,7 @@ func TestFollowRunOrder(t *testing.T) {
 	p := fileProject(t, map[string]string{"x.flow": "steps:\n  a: {use: http.get, in: {url: " + server.URL + "/a}}\n  b: {use: http.get, after: [a], in: {url: " + server.URL + "/b}}\noutputs: {text: =b.body}"})
 	client := runningBackend(t, p.dir)
 	var id string
-	json.Unmarshal(request(t, client, "run", "x", Values{})[0], &id)
+	json.Unmarshal(request(t, client, "run", "x", Values{}, "")[0], &id)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	select {
@@ -252,7 +252,7 @@ func TestStopRunsAndBackend(t *testing.T) {
 	client := runningBackend(t, p.dir)
 	for _, operation := range []string{"runs stop", "stop"} {
 		var id string
-		json.Unmarshal(request(t, client, "run", "x", Values{})[0], &id)
+		json.Unmarshal(request(t, client, "run", "x", Values{}, "")[0], &id)
 		select {
 		case <-entered:
 		case <-time.After(5 * time.Second):
@@ -311,7 +311,7 @@ func TestStartupInterruptsRecords(t *testing.T) {
 	if err := p.save(run); err != nil {
 		t.Fatal(err)
 	}
-	pending, err := p.begin("file.write", Values{"path": "marker", "text": "hi"})
+	pending, err := p.begin(Definition{Name: "file.write"}, Values{"path": "marker", "text": "hi"}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -392,7 +392,7 @@ func TestConcurrentPluginRequests(t *testing.T) {
 		}
 	}
 	var plugins []Plugin
-	if err := json.Unmarshal(request(t, client, "plugins")[0], &plugins); err != nil || len(plugins) != 2 || !plugins[0].Installed || !plugins[1].Installed || plugins[0].Name == plugins[1].Name {
+	if err := json.Unmarshal(request(t, client, "plugins")[0], &plugins); err != nil || len(plugins) != 2 || plugins[0].State != "installed" || plugins[1].State != "installed" || plugins[0].Name == plugins[1].Name {
 		t.Fatalf("one install overwrote the other: %+v, %v", plugins, err)
 	}
 }
@@ -401,7 +401,7 @@ func TestStopDuringPluginSetup(t *testing.T) {
 	p := fileProject(t, map[string]string{"nodes/wait.node": "doc: Wait\nrun: exec python3 -c 'import signal; signal.pause()'"})
 	client := runningBackend(t, p.dir)
 	var id string
-	json.Unmarshal(request(t, client, "run", "wait", Values{})[0], &id)
+	json.Unmarshal(request(t, client, "run", "wait", Values{}, "")[0], &id)
 	source := pluginFolder(t)
 	manifest, err := os.ReadFile(filepath.Join(source, "plugin"))
 	if err != nil {

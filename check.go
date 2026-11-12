@@ -31,8 +31,10 @@ func (ps Problems) Error() string {
 }
 
 type CheckReport struct {
-	Problems  []Problem `json:"problems"`
-	Unchecked []Problem `json:"unchecked"`
+	Problems   []Problem       `json:"problems"`
+	Unchecked  []Problem       `json:"unchecked"`
+	References []Reference     `json:"references"`
+	Nodes      map[string]Node `json:"nodes"`
 }
 
 type plan struct {
@@ -42,23 +44,50 @@ type plan struct {
 }
 
 type checker struct {
-	project *Project
-	active  map[string]bool
-	report  CheckReport
+	project     *Project
+	active      map[string]bool
+	report      CheckReport
+	root, scope string
+	path        valuePath
 }
 
-func (p *Project) Check(name string) CheckReport { _, report := p.check(name); return report }
+func (p *Project) Check(use Definition) CheckReport {
+	_, _, report := p.prepare(use, nil)
+	return report
+}
 func (p *Project) check(name string) (*plan, CheckReport) {
-	step, _, report := p.prepare(name, nil)
+	step, _, report := p.prepare(Definition{Name: name}, nil)
 	return step.plan, report
 }
 
-func (p *Project) prepare(name string, inputs Values) (*Step, binding, CheckReport) {
-	name = strings.TrimSuffix(name, ".flow")
-	c := checker{project: p, active: map[string]bool{}, report: CheckReport{Problems: []Problem{}, Unchecked: []Problem{}}}
-	step := &Step{Use: Definition{Name: name}, In: inputs}
-	bound, _ := c.compile(step, name, nil)
+func (p *Project) prepare(use Definition, inputs Values) (*Step, binding, CheckReport) {
+	use.Name = strings.TrimSuffix(use.Name, ".flow")
+	name := use.Name
+	if use.Workflow != nil {
+		name = "(inline)"
+	}
+	c := checker{project: p, root: name, scope: name, active: map[string]bool{}, report: CheckReport{
+		Problems: []Problem{}, Unchecked: []Problem{}, References: []Reference{}, Nodes: map[string]Node{},
+	}}
+	step := &Step{Use: use, In: inputs}
+	bound, _ := c.compile(step, name, nil, nil)
+	for i := range c.report.References {
+		ref := &c.report.References[i]
+		for _, problem := range c.report.Problems {
+			ref.Bad = ref.Bad || problem.covers(*ref)
+		}
+		for _, problem := range c.report.Unchecked {
+			ref.Unchecked = ref.Unchecked || problem.covers(*ref)
+		}
+	}
 	return step, bound, c.report
+}
+
+func (p Problem) covers(ref Reference) bool {
+	if p.Step == ref.Step {
+		return p.Input == ref.Input || strings.HasPrefix(ref.Input, p.Input+".")
+	}
+	return ref.Step == p.Step+"/"+p.Input || strings.HasPrefix(ref.Step, p.Step+"/"+p.Input+"/")
 }
 
 func (c *checker) problem(step, input, message string) {
@@ -74,50 +103,52 @@ func (c *checker) error(step, input string, err error) {
 	}
 }
 
-func (c *checker) compile(step *Step, location string, tree Values) (binding, []reference) {
+func (c *checker) compile(step *Step, location string, tree Values, path valuePath) (binding, []Reference) {
+	beforePath := c.path
+	c.path = path.child("in")
+	defer func() { c.path = beforePath }()
 	name := strings.TrimSuffix(step.Use.Name, ".flow")
 	node := c.project.lookup(name)
 	if step.Use.Workflow != nil {
 		flow := step.Use.Workflow
 		node = Node{Name: "(inline)", Doc: flow.Doc, Inputs: flow.Inputs, Workflow: flow}
 	}
-	if node.problem != nil {
-		c.error(location, "use", node.problem)
-		return binding{}, nil
-	}
-	if node.Workflow != nil && name != "" {
+	problem := node.problem
+	if node.Workflow != nil && name != "" && problem == nil {
 		if c.active[name] {
-			c.problem(location, "use", fmt.Sprintf("workflow %q calls itself; remove this workflow dependency", name))
-			return binding{}, nil
+			problem = fmt.Errorf("workflow %q calls itself; remove this workflow dependency", name)
+		} else {
+			c.active[name] = true
+			defer delete(c.active, name)
 		}
-		c.active[name] = true
-		defer delete(c.active, name)
+	}
+	if problem != nil {
+		c.error(location, "use", problem)
 	}
 	p := &plan{Node: node, deps: map[string]map[string]bool{}}
-	step.plan = p
 	p.Inputs = Ports{}
 	for name, port := range node.Inputs {
 		if port.Default != nil {
-			port.Default = c.expression(port.Default, port.Type, location, name, nil)
+			port.Default = c.expression(port.Default, port.Type, location, valuePath{name}, nil)
 		}
 		p.Inputs[name] = port
 	}
 	parsed, supplied := Values{}, Values{}
-	var refs []reference
+	var refs []Reference
 	for _, input := range keys(step.In) {
 		want := anyType
 		if port, exists := p.Inputs[input]; exists {
 			want = port.Type
 		}
 		before := len(c.report.Problems)
-		parsed[input] = c.expression(step.In[input], want, location, input, tree)
+		parsed[input] = c.expression(step.In[input], want, location, valuePath{input}, tree)
 		supplied[input] = anyType
 		if len(c.report.Problems) != before {
 			continue
 		}
 		supplied[input] = parsed[input]
 		if tree != nil {
-			selected, found, err := resolve(parsed[input], input, tree)
+			selected, found, err := resolve(parsed[input], valuePath{input}, tree)
 			if err != nil {
 				c.error(location, input, err)
 			} else {
@@ -126,6 +157,10 @@ func (c *checker) compile(step *Step, location string, tree Values) (binding, []
 			}
 		}
 	}
+	if problem != nil {
+		return binding{}, refs
+	}
+	step.plan = p
 	types := map[string]Type{}
 	bound := bind(p.Inputs, supplied, location, "", types)
 	for i := range bound.Problems {
@@ -161,10 +196,29 @@ func (c *checker) compile(step *Step, location string, tree Values) (binding, []
 	if step.Use.Workflow != nil {
 		step.Use.Workflow = p.Workflow
 	}
+	if c.scope == c.root {
+		display := map[string]Type{}
+		for letter := 'A'; letter <= 'Z'; letter++ {
+			display[string(letter)] = Type{Name: string(letter)}
+		}
+		for name, typ := range types {
+			display[name] = typ
+		}
+		node.Inputs, node.Outputs, node.Workflow = node.Inputs.substitute(display), node.Outputs.substitute(display), nil
+		node.NoOutsideEffect = p.NoOutsideEffect
+		if p.Workflow != nil {
+			node.Outputs = p.Outputs
+		}
+		key, _ := json.Marshal(path)
+		c.report.Nodes[string(key)] = node
+	}
 	return bound, refs
 }
 
 func (c *checker) workflow(p *plan, location string) {
+	beforeScope, beforePath := c.scope, c.path
+	c.scope, c.path = location, nil
+	defer func() { c.scope, c.path = beforeScope, beforePath }()
 	original := p.Workflow
 	flow := *original
 	flow.Inputs, flow.Steps, flow.Outputs = p.Inputs, map[string]Step{}, Values{}
@@ -199,7 +253,7 @@ func (c *checker) workflow(p *plan, location string) {
 				}
 			}
 		}
-		bound, refs := c.compile(&step, where, tree)
+		bound, refs := c.compile(&step, where, tree, valuePath{"steps", id})
 		c.report.Problems = append(c.report.Problems, missing(bound.Open, where, "")...)
 		for dependency := range c.references(where, refs) {
 			p.deps[id][dependency] = true
@@ -223,8 +277,8 @@ func (c *checker) workflow(p *plan, location string) {
 		if !portName(output) {
 			c.problem(location, "outputs."+output, "rename the output without dots or equals signs")
 		}
-		parsed := c.expression(original.Outputs[output], anyType, location, "outputs."+output, tree)
-		value, refs, err := resolve(parsed, "outputs."+output, tree)
+		parsed := c.expression(original.Outputs[output], anyType, location, valuePath{"outputs", output}, tree)
+		value, refs, err := resolve(parsed, valuePath{"outputs", output}, tree)
 		if err != nil {
 			c.error(location, "outputs."+output, err)
 			value = anyType
@@ -235,11 +289,11 @@ func (c *checker) workflow(p *plan, location string) {
 	}
 }
 
-func (c *checker) references(location string, refs []reference) map[string]bool {
+func (c *checker) references(location string, refs []Reference) map[string]bool {
 	deps := map[string]bool{}
 	for _, ref := range refs {
-		if ref.Step != "inputs" {
-			deps[ref.Step] = true
+		if ref.From[0] != "inputs" {
+			deps[ref.From[0]] = true
 		}
 		if ref.Unchecked {
 			c.report.Unchecked = append(c.report.Unchecked, Problem{location, ref.Input, "contents are unknown until execution; the path and consumer's expected type will be checked then"})
@@ -248,8 +302,13 @@ func (c *checker) references(location string, refs []reference) map[string]bool 
 	return deps
 }
 
-func (c *checker) expression(value any, want Type, location, path string, tree Values) any {
-	result, err := walk(value, want, path, func(value any, want Type, path string) (any, error) {
+func (c *checker) expression(value any, want Type, location string, path valuePath, tree Values) any {
+	result, _ := walk(value, want, path, func(value any, want Type, path valuePath) (any, error) {
+		if text, ok := value.(string); ok && tree != nil && c.scope == c.root {
+			if from := referenceParts(text); from != nil {
+				c.report.References = append(c.report.References, Reference{Step: location, Input: path.String(), From: from, Path: c.path.child(path...)})
+			}
+		}
 		if want.Name == "node" {
 			switch v := value.(type) {
 			case string:
@@ -259,11 +318,12 @@ func (c *checker) expression(value any, want Type, location, path string, tree V
 			case map[string]any:
 				data, err := json.Marshal(v)
 				if err != nil {
-					return nil, err
+					c.error(location, path.String(), err)
+					return anyType, nil
 				}
 				step := &Step{}
 				if err := decode(data, step); err != nil {
-					return nil, err
+					c.error(location, path.String(), err)
 				}
 				value = step
 			}
@@ -272,27 +332,23 @@ func (c *checker) expression(value any, want Type, location, path string, tree V
 			copy := *node
 			copy.contract = nil
 			node = &copy
+			bound, _ := c.compile(node, location+"/"+path.String(), tree, c.path.child(path...))
 			if len(node.After) > 0 {
-				return nil, fmt.Errorf("a boxed node is not scheduled; put after on the receiving step")
+				c.problem(location, path.String(), "a boxed node is not scheduled; put after on the receiving step")
 			}
-			bound, _ := c.compile(node, location+"/"+path, tree)
 			if node.plan == nil {
 				return anyType, nil
 			}
 			if len(bound.Open) > 1 {
-				return nil, fmt.Errorf("a boxed node has at most one open input; fill inputs or expose one object")
+				c.problem(location, path.String(), "a boxed node has at most one open input; fill inputs or expose one object")
 			}
 			if len(node.plan.Outputs) != 1 {
-				return nil, fmt.Errorf("a boxed node must have exactly one output; expose one object to return several values")
+				c.problem(location, path.String(), "a boxed node must have exactly one output; expose one object to return several values")
 			}
 			return node, nil
 		}
 		return value, nil
 	})
-	if err != nil {
-		c.error(location, path, err)
-		return anyType
-	}
 	return result
 }
 
@@ -346,7 +402,7 @@ func bind(ports Ports, supplied Values, step, prefix string, types map[string]Ty
 				bound.Problems = append(bound.Problems, Problem{step, prefix + input, "requires a node with no outside effect: " + effect + " has an outside effect or is unmarked"})
 			}
 		}
-		bound.Values[input], _ = walk(value, want, prefix+input, func(value any, want Type, _ string) (any, error) {
+		bound.Values[input], _ = walk(value, want, valuePath{prefix + input}, func(value any, want Type, _ valuePath) (any, error) {
 			if node, ok := value.(*Step); ok {
 				copy := *node
 				if want.Name == "any" {
@@ -363,8 +419,8 @@ func bind(ports Ports, supplied Values, step, prefix string, types map[string]Ty
 
 func outsideEffect(value any, want Type) string {
 	effect := ""
-	var inspect func(any, Type, string) (any, error)
-	inspect = func(value any, want Type, path string) (any, error) {
+	var inspect func(any, Type, valuePath) (any, error)
+	inspect = func(value any, want Type, path valuePath) (any, error) {
 		switch v := value.(type) {
 		case *Step:
 			if effect == "" {
@@ -384,7 +440,7 @@ func outsideEffect(value any, want Type) string {
 		}
 		return value, nil
 	}
-	_, _ = walk(value, want, "", inspect)
+	_, _ = walk(value, want, nil, inspect)
 	return effect
 }
 

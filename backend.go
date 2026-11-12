@@ -80,6 +80,7 @@ func Serve(ctx context.Context, dir string) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	b := &backend{dir: dir, ctx: ctx, cancel: cancel, offline: make(chan struct{}), active: map[string]*activeRun{}}
+	page := frontend()
 	server := &http.Server{BaseContext: func(net.Listener) context.Context { return ctx }, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		sent := false
@@ -103,8 +104,16 @@ func Serve(ctx context.Context, dir string) error {
 			}
 			line(reply{Error: &message})
 		}
-		if r.Host != client.Address || r.Header.Get("Origin") != "" && r.Header.Get("Origin") != "http://"+client.Address ||
-			subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+client.Credential)) != 1 {
+		if r.Host != client.Address || r.Header.Get("Origin") != "" && r.Header.Get("Origin") != "http://"+client.Address {
+			fail(http.StatusForbidden, "request refused")
+			return
+		}
+		if r.Method == http.MethodGet || r.Method == http.MethodHead {
+			w.Header().Del("Content-Type")
+			page.ServeHTTP(w, r)
+			return
+		}
+		if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+client.Credential)) != 1 {
 			fail(http.StatusForbidden, "request refused")
 			return
 		}
@@ -169,7 +178,7 @@ func interrupt(r *Record) {
 	}
 }
 
-func (b *backend) startRun(p *Project, name string, inputs Values) (string, error) {
+func (b *backend) startRun(p *Project, use Definition, inputs Values, name string) (string, error) {
 	b.mu.Lock()
 	if err := b.ctx.Err(); err != nil {
 		b.mu.Unlock()
@@ -177,7 +186,7 @@ func (b *backend) startRun(p *Project, name string, inputs Values) (string, erro
 	}
 	b.wg.Add(1)
 	b.mu.Unlock()
-	e, err := p.begin(name, inputs)
+	e, err := p.begin(use, inputs, name)
 	if err != nil {
 		b.wg.Done()
 		return "", err

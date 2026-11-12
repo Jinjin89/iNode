@@ -91,7 +91,7 @@ outputs: {count: =count.result}`,
 		"nodes/write.node": "doc: Write\noutputs: {text: text}\nrun: |\n  printf '{\"text\":\"hi\"}'",
 		"again.flow":       `steps: {again: {use: retry, in: {times: 2, do: write}}}`,
 	})
-	if report := p.Check("again"); !strings.Contains(Problems(report.Problems).Error(), "outside effect") {
+	if report := p.Check(Definition{Name: "again"}); !strings.Contains(Problems(report.Problems).Error(), "outside effect") {
 		t.Fatalf("undeclared effect accepted: %+v", report)
 	}
 }
@@ -170,7 +170,7 @@ func TestMalformedDescriptionsAndCollisions(t *testing.T) {
 		"doc: Bad\nrun: cat\ninnputs: {}", "doc: Bad", "run: cat",
 	} {
 		p := fileProject(t, map[string]string{"nodes/bad.node": source})
-		if report := p.Check("bad"); len(report.Problems) == 0 || report.Problems[0].Step != "bad" {
+		if report := p.Check(Definition{Name: "bad"}); len(report.Problems) == 0 || report.Problems[0].Step != "bad" {
 			t.Fatalf("bad description: %+v", report)
 		}
 		if _, err := p.Start(context.Background(), "text.upper", Values{"text": "hi"}); err != nil {
@@ -181,7 +181,7 @@ func TestMalformedDescriptionsAndCollisions(t *testing.T) {
 		p := fileProject(t, map[string]string{
 			"own.flow": "outputs: {text: hi}", "nodes/" + name + ".node": "doc: Duplicate\nrun: cat",
 		})
-		if report := p.Check(name); !strings.Contains(Problems(report.Problems).Error(), "more than one definition") {
+		if report := p.Check(Definition{Name: name}); !strings.Contains(Problems(report.Problems).Error(), "more than one definition") {
 			t.Fatalf("catalog collision: %+v", report)
 		}
 	}

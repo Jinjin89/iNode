@@ -60,8 +60,22 @@ func selectPath(value any, parts []string) (any, error) {
 	return value, nil
 }
 
+type valuePath []string
+
+func (p valuePath) child(parts ...string) valuePath {
+	return append(append(valuePath{}, p...), parts...)
+}
+func (p valuePath) String() string { return strings.Join(p, ".") }
+
+func referenceParts(value string) []string {
+	if strings.HasPrefix(value, "=") && !strings.HasPrefix(value, "==") {
+		return strings.Split(value[1:], ".")
+	}
+	return nil
+}
+
 // A node-valued port is a leaf even when its syntax is an object.
-func walk(value any, want Type, path string, leaf func(any, Type, string) (any, error)) (any, error) {
+func walk(value any, want Type, path valuePath, leaf func(any, Type, valuePath) (any, error)) (any, error) {
 	if want.Name != "node" {
 		switch v := value.(type) {
 		case []any:
@@ -72,7 +86,7 @@ func walk(value any, want Type, path string, leaf func(any, Type, string) (any, 
 			}
 			for i, item := range v {
 				var err error
-				result[i], err = walk(item, itemType, fmt.Sprintf("%s.%d", path, i), leaf)
+				result[i], err = walk(item, itemType, path.child(strconv.Itoa(i)), leaf)
 				if err != nil {
 					return nil, err
 				}
@@ -86,7 +100,7 @@ func walk(value any, want Type, path string, leaf func(any, Type, string) (any, 
 					field = typ
 				}
 				var err error
-				result[name], err = walk(v[name], field, strings.TrimPrefix(path+"."+name, "."), leaf)
+				result[name], err = walk(v[name], field, path.child(name), leaf)
 				if err != nil {
 					return nil, err
 				}
@@ -97,34 +111,37 @@ func walk(value any, want Type, path string, leaf func(any, Type, string) (any, 
 	return leaf(value, want, path)
 }
 
-type reference struct {
-	Step, Input string
-	Unchecked   bool
+type Reference struct {
+	Step      string    `json:"step"`
+	Input     string    `json:"input"`
+	From      []string  `json:"from"`
+	Path      valuePath `json:"path"`
+	Unchecked bool      `json:"unchecked,omitempty"`
+	Bad       bool      `json:"bad,omitempty"`
 }
 
-func resolve(value any, path string, tree Values) (any, []reference, error) {
-	var found []reference
-	result, err := walk(value, anyType, path, func(value any, _ Type, path string) (any, error) {
+func resolve(value any, path valuePath, tree Values) (any, []Reference, error) {
+	var found []Reference
+	result, err := walk(value, anyType, path, func(value any, _ Type, path valuePath) (any, error) {
 		switch v := value.(type) {
 		case string:
 			if strings.HasPrefix(v, "==") {
 				return v[1:], nil
 			}
-			if strings.HasPrefix(v, "=") {
-				parts := strings.Split(v[1:], ".")
+			if parts := referenceParts(v); parts != nil {
 				if len(parts) < 2 {
-					return nil, Problem{Input: path, Message: v + " needs a step and output; use =step.output or == for literal text starting with ="}
+					return nil, Problem{Input: path.String(), Message: v + " needs a step and output; use =step.output or == for literal text starting with ="}
 				}
 				selected, err := selectPath(tree, parts)
 				if err != nil {
-					return nil, Problem{Input: path, Message: v + ": " + err.Error()}
+					return nil, Problem{Input: path.String(), Message: v + ": " + err.Error()}
 				}
-				found = append(found, reference{parts[0], path, typeOf(selected).unchecked()})
+				found = append(found, Reference{Input: path.String(), From: parts, Path: path, Unchecked: typeOf(selected).unchecked()})
 				return selected, nil
 			}
 		case *Step:
 			bound := *v
-			inputs, refs, err := resolve(v.In, path+".in", tree)
+			inputs, refs, err := resolve(v.In, path.child("in"), tree)
 			if err != nil {
 				return nil, err
 			}
@@ -138,7 +155,7 @@ func resolve(value any, path string, tree Values) (any, []reference, error) {
 }
 
 func normalise(value any) (any, error) {
-	return walk(value, anyType, "", func(value any, _ Type, _ string) (any, error) {
+	return walk(value, anyType, nil, func(value any, _ Type, _ valuePath) (any, error) {
 		switch value.(type) {
 		case *Step, map[string]any, []any:
 			return value, nil

@@ -17,6 +17,7 @@ var Operations = map[string]operation{
 	"nodes":       {call: (*Project).Nodes},
 	"show":        {call: (*Project).Describe},
 	"check":       {call: (*Project).Check},
+	"save":        {call: (*Project).Save, write: true},
 	"run":         {call: (*backend).startRun},
 	"runs":        {call: (*Project).Runs},
 	"runs show":   {call: (*Project).ShowRun},

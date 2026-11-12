@@ -51,7 +51,7 @@ func TestPluginFolder(t *testing.T) {
 		t.Fatal("setup ran in the source folder")
 	}
 	plugins := p.Plugins()
-	if len(plugins) != 1 || plugins[0].Name != "tiny" || plugins[0].Version != "1" || !plugins[0].Installed || filepath.IsAbs(plugins[0].Source) || filepath.Join(p.dir, plugins[0].Source) != source {
+	if len(plugins) != 1 || plugins[0].Name != "tiny" || plugins[0].Version != "1" || plugins[0].State != "installed" || filepath.IsAbs(plugins[0].Source) || filepath.Join(p.dir, plugins[0].Source) != source {
 		t.Fatalf("plugin list: %+v", plugins)
 	}
 	var recorded []Plugin
@@ -81,7 +81,7 @@ func TestPluginFolder(t *testing.T) {
 	if _, err := os.Stat(installed); !os.IsNotExist(err) {
 		t.Fatalf("remove kept the installed folder: %v", err)
 	}
-	if report := p.Check("greet"); !strings.Contains(Problems(report.Problems).Error(), "unknown node") {
+	if report := p.Check(Definition{Name: "greet"}); !strings.Contains(Problems(report.Problems).Error(), "unknown node") {
 		t.Fatalf("remove kept the node in the catalog: %+v", report)
 	}
 	if err := p.Remove("tiny"); err == nil {
@@ -99,10 +99,10 @@ func TestMissingPlugin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plugins := p.Plugins(); len(plugins) != 1 || plugins[0].Installed {
+	if plugins := p.Plugins(); len(plugins) != 1 || plugins[0].State == "installed" {
 		t.Fatalf("missing plugin not listed: %+v", plugins)
 	}
-	report := p.Check("greet")
+	report := p.Check(Definition{Name: "greet"})
 	if len(report.Problems) != 1 || report.Problems[0].Step != "greet/greet" || report.Problems[0].Input != "use" || !strings.Contains(report.Problems[0].Message, "listed but not installed") || !strings.Contains(report.Problems[0].Message, "inode add "+source) {
 		t.Fatalf("missing-plugin diagnosis: %+v", report)
 	}
@@ -144,7 +144,7 @@ func TestPluginGit(t *testing.T) {
 		t.Fatal(err)
 	}
 	plugins := p.Plugins()
-	if len(plugins) != 1 || plugins[0].Version != "1" || plugins[0].Source != source || !plugins[0].Installed {
+	if len(plugins) != 1 || plugins[0].Version != "1" || plugins[0].Source != source || plugins[0].State != "installed" {
 		t.Fatalf("git ref or source was lost: %+v", plugins)
 	}
 	if _, err := os.Stat(filepath.Join(p.pluginDir("tiny"), "untracked")); !os.IsNotExist(err) {
@@ -186,11 +186,11 @@ func TestFailedSetupAndReinstall(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFiles(t, source, map[string]string{"plugin": strings.Replace(string(manifest), `version: "1"`, `version: "2"`, 1)})
-	if err := p.Add(context.Background(), source, io.Discard); err != nil || !p.Plugins()[0].Installed || p.Plugins()[0].Version != "2" {
+	if err := p.Add(context.Background(), source, io.Discard); err != nil || p.Plugins()[0].State != "installed" || p.Plugins()[0].Version != "2" {
 		t.Fatalf("explicit add did not replace the listed version: %+v, %v", p.Plugins(), err)
 	}
 	writeFiles(t, source, map[string]string{"plugin": string(manifest)})
-	if err := p.Add(context.Background(), source, io.Discard); err != nil || !p.Plugins()[0].Installed {
+	if err := p.Add(context.Background(), source, io.Discard); err != nil || p.Plugins()[0].State != "installed" {
 		t.Fatalf("explicit reinstall: %v", err)
 	}
 }

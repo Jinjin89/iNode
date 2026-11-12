@@ -115,6 +115,7 @@ type Node struct {
 	Outputs         Ports     `json:"outputs"`
 	NoOutsideEffect bool      `json:"no_outside_effect"`
 	Workflow        *Workflow `json:"workflow,omitempty"`
+	Version         string    `json:"version,omitempty"`
 	run             func(context.Context, Values, Call) (Values, error)
 	problem         error
 }
@@ -160,8 +161,14 @@ func (p *Project) load() error {
 		path := filepath.Join(p.dir, entry.Name())
 		name := strings.TrimSuffix(entry.Name(), ".flow")
 		var flow Workflow
-		err := readYAML(path, &flow)
-		p.register(name, Node{Doc: flow.Doc, Inputs: flow.Inputs, Workflow: &flow, problem: err})
+		data, err := os.ReadFile(path)
+		if err == nil {
+			err = decodeYAML(data, &flow)
+		}
+		if err != nil {
+			err = fmt.Errorf("%s: %w", path, err)
+		}
+		p.register(name, Node{Doc: flow.Doc, Inputs: flow.Inputs, Workflow: &flow, Version: version(data), problem: err})
 	}
 	if err := p.loadNodes(filepath.Join(p.dir, "nodes"), ""); err != nil {
 		return err
@@ -174,16 +181,20 @@ func readYAML(path string, target any) error {
 	if err != nil {
 		return err
 	}
+	if err := decodeYAML(data, target); err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	return nil
+}
+
+func decodeYAML(data []byte, target any) error {
 	var raw any
-	err = yaml.NewDecoder(bytes.NewReader(data)).Decode(&raw)
+	err := yaml.NewDecoder(bytes.NewReader(data)).Decode(&raw)
 	if err == nil {
 		data, err = json.Marshal(raw)
 	}
 	if err == nil {
 		err = decode(data, target)
-	}
-	if err != nil {
-		err = fmt.Errorf("%s: %w", path, err)
 	}
 	return err
 }
@@ -205,12 +216,12 @@ func (p *Project) Nodes() []Node {
 func (p *Project) Describe(name string) (Node, error) {
 	name = strings.TrimSuffix(name, ".flow")
 	plan, report := p.check(name)
-	if len(report.Problems) != 0 {
+	if plan == nil {
 		return Node{}, Problems(report.Problems)
 	}
-	node := plan.Node
-	if node.Workflow == nil {
-		node.Inputs, node.Outputs = p.nodes[name].Inputs, p.nodes[name].Outputs
+	node := p.nodes[name]
+	if node.Workflow != nil {
+		node.Outputs, node.NoOutsideEffect = plan.Outputs, plan.NoOutsideEffect
 	}
 	return node, nil
 }

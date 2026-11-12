@@ -31,7 +31,7 @@ func TestControlExamples(t *testing.T) {
 		{"guard_division", Values{"value": float64(0)}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if report := p.Check(test.name); len(report.Problems) != 0 {
+			if report := p.Check(Definition{Name: test.name}); len(report.Problems) != 0 {
 				t.Fatal(report)
 			}
 			run, err := p.Start(context.Background(), test.name, nil)
@@ -67,7 +67,7 @@ func TestBoxSignatures(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			p := project(t, map[string]string{"x": test.flow})
-			report := p.Check("x")
+			report := p.Check(Definition{Name: "x"})
 			if !strings.Contains(Problems(report.Problems).Error(), test.message) {
 				t.Fatalf("wanted %q, got %+v", test.message, report)
 			}
@@ -77,7 +77,7 @@ func TestBoxSignatures(t *testing.T) {
 		})
 	}
 	p := project(t, map[string]string{"a": `steps: {b: {use: retry, in: {times: 1, do: b}}}`, "b": `steps: {a: {use: retry, in: {times: 1, do: a}}}`})
-	if report := p.Check("a"); !strings.Contains(Problems(report.Problems).Error(), "calls itself") {
+	if report := p.Check(Definition{Name: "a"}); !strings.Contains(Problems(report.Problems).Error(), "calls itself") {
 		t.Fatal(report)
 	}
 }
@@ -96,7 +96,7 @@ outputs: {paths: =each.result}`,
 			t.Fatalf("effect lost in %s: %+v, %v", name, node, err)
 		}
 	}
-	report := p.Check("x")
+	report := p.Check(Definition{Name: "x"})
 	message := Problems(report.Problems).Error()
 	if !strings.Contains(message, "requires a node with no outside effect") || !strings.Contains(message, "file.write") || !strings.Contains(message, "/each/do") {
 		t.Fatal(message)
@@ -279,7 +279,7 @@ outputs: {count: =loop.result}`, test.max)})
 func TestUncheckedBoxEdges(t *testing.T) {
 	for _, value := range []string{"false", "{state: 1, done: wrong}", "{state: wrong, done: true}"} {
 		p := project(t, map[string]string{"x": `steps: {loop: {use: repeat, in: {start: 0, max: 1, do: {use: {inputs: {n: number}, steps: {v: {use: data.value, in: {value: ` + value + `}}}, outputs: {reply: =v.value}}}}}}`})
-		report := p.Check("x")
+		report := p.Check(Definition{Name: "x"})
 		if len(report.Problems) != 0 || len(report.Unchecked) == 0 {
 			t.Fatal(report)
 		}
@@ -350,7 +350,7 @@ outputs: {name: =inputs.reply.name}`})
 		}
 	}
 	p = project(t, map[string]string{"bad": `steps: {a: {use: text.upper, in: {text: hi}}, b: {use: text.upper, in: {text: =a.missing}}}`})
-	message := Problems(p.Check("bad").Problems).Error()
+	message := Problems(p.Check(Definition{Name: "bad"}).Problems).Error()
 	if strings.Count(message, `input "text"`) != 1 {
 		t.Fatal(message)
 	}
@@ -380,7 +380,7 @@ func TestRetryRequiresKnownEffect(t *testing.T) {
 	p := project(t, map[string]string{"x": `inputs: {work: node() gives text}
 steps: {again: {use: retry, in: {times: 1, do: =inputs.work}}}
 outputs: {text: =again.result}`})
-	if report := p.Check("x"); !strings.Contains(Problems(report.Problems).Error(), "outside effect is unknown") {
+	if report := p.Check(Definition{Name: "x"}); !strings.Contains(Problems(report.Problems).Error(), "outside effect is unknown") {
 		t.Fatal(report)
 	}
 	run, err := p.Start(context.Background(), "x", Values{"work": Values{"use": "text.upper", "in": Values{"text": "hi"}}})
@@ -389,7 +389,7 @@ outputs: {text: =again.result}`})
 	}
 	for _, flag := range []string{"true", "false"} {
 		p := project(t, map[string]string{"x": `inputs: {work: {type: node() gives text, no_outside_effect: ` + flag + `}}`})
-		if report := p.Check("x"); !strings.Contains(Problems(report.Problems).Error(), "unknown field") {
+		if report := p.Check(Definition{Name: "x"}); !strings.Contains(Problems(report.Problems).Error(), "unknown field") {
 			t.Fatal(report)
 		}
 	}
@@ -397,7 +397,7 @@ outputs: {text: =again.result}`})
 
 func TestNestedLiteralTypes(t *testing.T) {
 	p := project(t, map[string]string{"x": `steps: {each: {use: map, in: {over: [[hi, 1]], do: text.join}}}`})
-	if report := p.Check("x"); !strings.Contains(Problems(report.Problems).Error(), "needs text") {
+	if report := p.Check(Definition{Name: "x"}); !strings.Contains(Problems(report.Problems).Error(), "needs text") {
 		t.Fatal(report)
 	}
 }

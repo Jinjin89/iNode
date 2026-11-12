@@ -79,7 +79,7 @@ func (e *execution) update(record *Record, err error, change func()) error {
 }
 
 func (p *Project) Start(ctx context.Context, name string, inputs Values) (*Record, error) {
-	e, err := p.begin(name, inputs)
+	e, err := p.begin(Definition{Name: name}, inputs, "")
 	if e == nil {
 		return nil, err
 	}
@@ -89,14 +89,14 @@ func (p *Project) Start(ctx context.Context, name string, inputs Values) (*Recor
 	return e.root, err
 }
 
-func (p *Project) begin(name string, inputs Values) (*execution, error) {
+func (p *Project) begin(use Definition, inputs Values, name string) (*execution, error) {
 	data, err := normalise(inputs)
 	if err != nil {
-		return nil, fmt.Errorf("%s inputs: use JSON-compatible values: %w", name, err)
+		return nil, fmt.Errorf("inputs: use JSON-compatible values: %w", err)
 	}
 	inputs, _ = data.(Values)
-	step, bound, report := p.prepare(name, inputs)
-	report.Problems = append(report.Problems, missing(bound.Open, name, "")...)
+	step, bound, report := p.prepare(use, inputs)
+	report.Problems = append(report.Problems, missing(bound.Open, use.Name, "")...)
 	if len(report.Problems) > 0 {
 		return nil, Problems(report.Problems)
 	}
@@ -106,6 +106,12 @@ func (p *Project) begin(name string, inputs Values) (*execution, error) {
 	}
 	step.In = values.Values
 	record := newRecord(step.plan)
+	if use.Workflow != nil {
+		record.Node = name
+		if record.Node == "" {
+			record.Node = "Unsaved workflow"
+		}
+	}
 	record.ID = rand.Text()
 	e := &execution{project: p, root: record, step: *step}
 	err = e.update(record, nil, func() { record.Inputs = step.In })
@@ -232,7 +238,7 @@ func (e *execution) workflow(ctx context.Context, plan *plan, record *Record, in
 			if !ready {
 				continue
 			}
-			resolved, _, err := resolve(plan.Workflow.Steps[id].In, "", values)
+			resolved, _, err := resolve(plan.Workflow.Steps[id].In, nil, values)
 			arguments, _ := resolved.(map[string]any)
 			if err == nil {
 				bound := bind(plan.Workflow.Steps[id].plan.Inputs, arguments, location+"/"+id, "", nil)
@@ -268,7 +274,7 @@ func (e *execution) workflow(ctx context.Context, plan *plan, record *Record, in
 	if failure != nil {
 		return nil, failure
 	}
-	outputs, _, err := resolve(plan.Workflow.Outputs, "outputs", values)
+	outputs, _, err := resolve(plan.Workflow.Outputs, valuePath{"outputs"}, values)
 	result, _ := outputs.(map[string]any)
 	return result, err
 }

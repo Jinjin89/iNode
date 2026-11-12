@@ -12,13 +12,13 @@ import (
 )
 
 type Plugin struct {
-	Name      string   `json:"name" yaml:"name"`
-	Version   string   `json:"version" yaml:"version"`
-	Source    string   `json:"source,omitempty" yaml:"source,omitempty"`
-	Doc       string   `json:"doc,omitempty" yaml:"doc,omitempty"`
-	Accesses  []string `json:"accesses,omitempty" yaml:"accesses,omitempty"`
-	Setup     string   `json:"setup,omitempty" yaml:"setup,omitempty"`
-	Installed bool     `json:"installed" yaml:"-"`
+	Name     string   `json:"name" yaml:"name"`
+	Version  string   `json:"version" yaml:"version"`
+	Source   string   `json:"source,omitempty" yaml:"source,omitempty"`
+	Doc      string   `json:"doc,omitempty" yaml:"doc,omitempty"`
+	Accesses []string `json:"accesses,omitempty" yaml:"accesses,omitempty"`
+	Setup    string   `json:"setup,omitempty" yaml:"setup,omitempty"`
+	State    string   `json:"state,omitempty" yaml:"-"`
 }
 
 func (plugin Plugin) validate() error {
@@ -55,8 +55,9 @@ func (p *Project) loadPlugins() error {
 		seen[plugin.Name] = true
 		var installed Plugin
 		err := readYAML(filepath.Join(p.pluginDir(plugin.Name), "plugin"), &installed)
-		p.plugins[i].Installed = err == nil && installed.Name == plugin.Name && installed.Version == plugin.Version
-		if p.plugins[i].Installed {
+		p.plugins[i].State = "missing"
+		if err == nil && installed.Name == plugin.Name && installed.Version == plugin.Version {
+			p.plugins[i].State = "installed"
 			if err := p.loadNodes(filepath.Join(p.pluginDir(plugin.Name), "nodes"), plugin.Name+"."); err != nil {
 				return err
 			}
@@ -70,7 +71,7 @@ func (p *Project) lookup(name string) Node {
 		return node
 	}
 	for _, plugin := range p.plugins {
-		if !plugin.Installed && strings.HasPrefix(name, plugin.Name+".") {
+		if plugin.State == "missing" && strings.HasPrefix(name, plugin.Name+".") {
 			return Node{Name: name, problem: fmt.Errorf("plugin %q version %s is listed but not installed; run inode add %s",
 				plugin.Name, plugin.Version, plugin.Source)}
 		}

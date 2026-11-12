@@ -2,7 +2,7 @@
 
 How the model in `design.md` is built. This document follows the model and never the other way round: it may only use concepts defined there (node, run, trigger, plugin). If something here would require the user to learn a new idea, either `design.md` is changed on purpose or this document is simplified.
 
-**Built so far:** the core (catalog, checker, runner, run records), boxes with the control nodes `map`, `choose`, `repeat`, `retry` and `try`, a few built-in nodes, nodes that are programs, plugins installed from a folder or a git repository, the long-running backend with its interface, and the command line as a client of it. Not built yet: the frontend, saving workflows through the interface, run again and run from here, triggers, secrets, long-lived plugin processes, `agent`, plugin search.
+**Built so far:** the core (catalog, checker, runner, run records), boxes with the control nodes `map`, `choose`, `repeat`, `retry` and `try`, a few built-in nodes, nodes that are programs, plugins installed from a folder or a git repository, the long-running backend with its interface, the command line as a client of it, and the frontend's Canvas and Runs screens (editing, saving, checking and running a workflow, and viewing past runs). Not built yet: building steps inside a box on the canvas, run again and run from here, the When, Plugins and Secrets screens, triggers, secrets, long-lived plugin processes, `agent`, plugin search.
 
 ## Shape
 
@@ -34,7 +34,7 @@ Six parts, each with one job.
 
 Rules that hold the parts together:
 
-- **One checker.** It is the single implementation of workflow-structure checking, type compatibility, declared input constraints, cycles through saved workflows and boxes, and the "no outside effect" inference. The frontend asks it instead of deciding itself. Plugins remain responsible for validation specific to their operations at run time.
+- **One checker.** It is the single implementation of workflow-structure checking, type compatibility, declared input constraints, cycles through saved workflows and boxes, and the "no outside effect" inference. The frontend asks it instead of deciding itself: after each edit it sends the workflow as it stands, saved or not, and draws the answer, which lists the problems, the references found (the lines on the canvas) and each step's inputs and outputs with their types filled in. Plugins remain responsible for validation specific to their operations at run time.
 - **One entry to the runner: start a run of a node.** A press of Run, a command, a trigger event, a plugin's call and "try this node alone" all arrive the same way. Run from here is the same entry, given an inline workflow made of the selected steps with the copied values as its inputs.
 - **The runner executes a checked snapshot.** It runs the definitions as they were when checked, and does not look up definitions that may change during the run. The snapshot is kept with the record.
 - **A node is performed by one of two things.** The runner itself performs workflows; a plugin performs everything else. The bundled standard nodes form a plugin that lives inside the backend process and obeys the same descriptions, checks and child-call contract as any other. The runner does not recognise `map` or `choose` by name.
@@ -100,7 +100,7 @@ my-project/
                         waiting events, which triggers are on
 ```
 
-- Everything outside `.inode/` is plain text that can be read, edited by hand, and put under version control.
+- Everything outside `.inode/` is plain text that can be read, edited by hand, and put under version control. Saving a workflow from the frontend rewrites its file, so comments written by hand in it are lost.
 - Having a project's files is not permission to run its contents. A copied project reports its missing plugins and waits for an explicit install; its triggers start as off; its secrets are asked for.
 - A `.flow` file may carry a `view` part with the positions of steps on the canvas. It is preserved when saving and in the snapshots kept with run records, and has no effect on checking, running, or deciding whether a workflow has changed.
 
@@ -113,7 +113,7 @@ The control interface listens only on the local machine and requires a credentia
 | Part | Choice | Reason |
 |---|---|---|
 | Backend | Go | Ships as one executable with the built frontend inside, which makes installation one step. Cheap concurrent runs and process supervision are what the runner and plugin host need. |
-| Frontend | TypeScript, React, React Flow | React Flow is the usual library for node canvases and can draw nodes inside nodes. That is only drawing; the backend stays the authority on what a box means. |
+| Frontend | TypeScript, React, React Flow | React Flow is the usual library for node canvases and can draw nodes inside nodes. That is only drawing; the backend stays the authority on what a box means. The built page is kept in the repository (`web/dist`), so building iNode needs only Go; `./build.sh` rebuilds both, and `./build.sh --check` fails when the built page does not match its source. |
 | Storage | Plain folders: one JSON file per run. SQLite when listing and searching runs need it. | Local, no server, simple to back up. |
 | Client to backend | JSON over HTTP: a request names one operation and its arguments, and the reply is one JSON line per value, or one error. Following a run is a reply that stays open and sends the run's current record at each change; a slow follower skips to the newest. | Any language can call it, and it needs nothing beyond HTTP. |
 | Plugins | Separate processes exchanging JSON; a small Python helper library for authors | Plugins are not tied to the backend's language. |
