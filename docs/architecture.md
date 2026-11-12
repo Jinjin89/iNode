@@ -12,6 +12,7 @@ The interface is grouped by what the user manages:
 
 | Group | Operations |
 |---|---|
+| Help | tutorial text |
 | Nodes | list, describe |
 | Workflows | open, save (a save based on an out-of-date copy is rejected), check, "what can connect here" |
 | Runs | start, stop, list, show, watch live, run again, run from here |
@@ -59,6 +60,8 @@ The frontend's Run button does exactly the same, and draws the live updates on t
 ## Frontend
 
 The frontend draws what the backend says and sends back what the user did.
+
+The Guide panel stays beside the work and opens when a project has no runs. Its text comes from the read-only help operation: `docs/tutorial.md`, embedded in the binary and also printed by `inode help` without starting a backend.
 
 Five screens:
 

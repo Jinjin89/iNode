@@ -61,6 +61,22 @@ func cliProject(t *testing.T) {
 	})
 }
 
+func TestHelp(t *testing.T) {
+	t.Chdir(t.TempDir())
+	for _, arg := range []string{"help", "-h", "--help"} {
+		var out, diagnostic bytes.Buffer
+		if err := invokeCLI(context.Background(), []string{arg}, &out, &diagnostic); err != nil {
+			t.Fatal(err)
+		}
+		if out.String() != inode.Help()+"\n"+usage+"\n" || diagnostic.Len() != 0 {
+			t.Fatalf("help: %s; %s", &out, &diagnostic)
+		}
+	}
+	if _, err := os.Stat(".inode"); !os.IsNotExist(err) {
+		t.Fatal("help touched the project")
+	}
+}
+
 func TestCommands(t *testing.T) {
 	cliProject(t)
 	if err := os.WriteFile("upper.flow", []byte("inputs: {text: text}\nsteps: {upper: {use: text.upper, in: {text: =inputs.text}}}\noutputs: {text: =upper.text}"), 0600); err != nil {

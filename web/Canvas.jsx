@@ -352,7 +352,7 @@ function CanvasView({ workflow, catalog, onEdit, record, onFrom, onCall, onOpen,
           onEdgeClick={(_, edge) => { if (onEdit) select(edge.id); }}>
           <Fit key={record?.state + ':' + failed + ':' + !!Object.keys(workflow.steps || {}).length} ready={fresh} nodes={nodes} focus={failed && handle(['steps', failed])} /><Background gap={22} size={1} /><Controls showInteractive={false} />
         </ReactFlow>
-        {onEdit && !Object.keys(workflow.steps || {}).length && <div className="empty-canvas"><strong>Add your first step</strong><p>Click a node on the left, or drag it onto the canvas.</p></div>}
+        {onEdit && !Object.keys(workflow.steps || {}).length && <div className="empty-canvas">Click a node on the left or drag it onto the canvas to add a step.</div>}
       </div>
       {selected && <aside className="inspector nowheel">
         <button className="quiet close" title="Close (Escape)" onClick={() => select('')}>Close</button>

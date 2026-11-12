@@ -74,6 +74,21 @@ func request(t *testing.T, client *Client, name string, args ...any) []json.RawM
 	return results
 }
 
+func TestHelp(t *testing.T) {
+	text, err := os.ReadFile("docs/tutorial.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := runningBackend(t, t.TempDir())
+	var received string
+	if err := json.Unmarshal(request(t, client, "help")[0], &received); err != nil {
+		t.Fatal(err)
+	}
+	if received != string(text) || received != Help() {
+		t.Fatal("help differs from the embedded tutorial")
+	}
+}
+
 func TestStopWithUnusedConnection(t *testing.T) {
 	var unused net.Conn
 	// Keep the connection open until the fixture has checked shutdown.

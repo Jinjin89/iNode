@@ -14,6 +14,7 @@ type operation struct {
 }
 
 var Operations = map[string]operation{
+	"help":  {call: Help},
 	"nodes": {call: (*Project).Nodes},
 	"show":  {call: (*Project).Describe},
 	"check": {call: (*Project).Check},

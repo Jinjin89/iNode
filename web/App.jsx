@@ -6,6 +6,7 @@ import { When } from './When';
 import { Secrets } from './Secrets';
 import { Runs } from './Runs';
 import { Duration, Value } from './Value';
+import { Guide } from './Guide';
 
 function Source({ source, showRun, fail }) {
   const [record, setRecord] = useState(null);
@@ -28,6 +29,8 @@ export function App() {
   const [runId, setRunId] = useState('');
   const [runPath, setRunPath] = useState([]);
   const [screen, setScreen] = useState('Canvas');
+  const [guide, setGuide] = useState(null);
+  const [tutorial, setTutorial] = useState('');
   const [plugins, setPlugins] = useState([]);
   const [source, setSource] = useState('');
   const [manifest, setManifest] = useState('');
@@ -35,6 +38,7 @@ export function App() {
   const [enterInputs, setEnterInputs] = useState(false);
   const [checked, setChecked] = useState({ document: null, report: emptyReport });
   const [runError, setRunError] = useState('');
+  const [runRequest, setRunRequest] = useState(null);
   const [fromEditor, setFromEditor] = useState(false);
   const [pendingSource, setPendingSource] = useState(null);
   const [preview, setPreview] = useState(null);
@@ -54,7 +58,7 @@ export function App() {
   const shown = trail.at(-1)?.run;
   const values = inputValues(workflow, runInputs);
   const messages = runMessages(runError, Object.keys(workflow.inputs || {}));
-  const runReason = checked.error ? 'Fix the check error to run' : checked.document !== content(workflow) ? 'Checking…'
+  const runReason = checked.document !== content(workflow) ? '' : checked.error ? 'Fix the check error to run'
     : report.problems.length ? 'Fix problems to run' : '';
   const runDisabled = pending.includes('run') || pending.includes('inputs') || !!runReason;
   const perform = async (action, name = 'operation') => {
@@ -86,8 +90,8 @@ export function App() {
   };
   useEffect(() => {
     perform(async () => {
-      for await (const nodes of call(op.nodes)) {
-        setCatalog(nodes);
+      for (const [operation, receive] of [[op.help, setTutorial], [op.nodes, setCatalog], [op.runs, rows => setGuide(previous => previous ?? rows.length === 0)]]) {
+        for await (const value of call(operation)) receive(value);
       }
     }, 'open');
   }, []);
@@ -109,8 +113,7 @@ export function App() {
       setRunError(error.message); setEnterInputs(true);
     }
   }, 'run');
-  const requestRun = () => {
-    if (!valid()) return;
+  const requestInputs = () => {
     if (!Object.keys(workflow.inputs || {}).length) { run(); return; }
     if (enterInputs) { runButton.current?.focus(); return; }
     perform(async () => {
@@ -120,6 +123,16 @@ export function App() {
       if (latest.current.opened === basedOn) { setRunInputs(inputValues(latest.current.workflow, previous?.inputs || {})); setRunError(''); setEnterInputs(true); }
     }, 'inputs');
   };
+  const requestRun = (choice = 'inputs') => { if (!runDisabled && valid()) setRunRequest({ choice, document: content(workflow) }); };
+  useEffect(() => {
+    if (!runRequest) return;
+    if (screen !== 'Canvas' || runRequest.document !== content(workflow)) { setRunRequest(null); return; }
+    if (checked.document !== runRequest.document) return;
+    setRunRequest(null);
+    if (!checked.error && !report.problems.length) {
+      if (runRequest.choice === 'start') run(); else requestInputs();
+    }
+  }, [runRequest, checked, workflow, screen]);
   const changePlugin = (operation, source) => perform(async () => {
     setManifest('');
     try { for await (const text of call(operation, source)) setManifest(previous => previous + text); }
@@ -172,10 +185,10 @@ export function App() {
         const listing = { Plugins: [op.plugins, setPlugins] }[name];
         if (listing) perform(async () => { for await (const rows of call(listing[0])) listing[1](rows); });
       }}>{name}</button>)}</nav>
-      <span className="local">● Local</span>
+      <span className="local">● Local</span><button className={guide ? 'active' : 'quiet'} aria-expanded={!!guide} onClick={() => setGuide(!guide)}>Guide</button>
     </header>
     {error && <div className="notice problem" role="alert">{error}<button className="quiet" onClick={() => setError('')}>Close</button></div>}
-    {screen === 'Canvas' ? <div className="workspace">
+    <div className="page-content">{screen === 'Canvas' ? <div className="workspace">
       <section className="work"><div className={'toolbar ' + (runId ? 'run-bar' : '')}>
         {runId ? <>
           <div><small>Recorded run · Read-only</small>
@@ -206,8 +219,8 @@ export function App() {
           <span className="save-state">{unsaved ? 'Unsaved' : opened.version ? 'Saved' : 'Not saved'}</span>
           <button ref={saveButton} title="Save (Ctrl/Cmd+S)" disabled={pending.includes('save')} onClick={save}>{pending.includes('save') ? 'Saving…' : 'Save'}</button>
           <button ref={enterInputs ? undefined : runButton} type="button" title={(checked.error || runReason || 'Run') + ' (Ctrl/Cmd+Enter)'} className="primary"
-            disabled={runDisabled} onClick={requestRun}>
-            {pending.includes('run') ? 'Starting…' : pending.includes('inputs') ? 'Loading inputs…' : runReason || 'Run'}
+            disabled={runDisabled} onClick={() => requestRun()}>
+            {pending.includes('run') ? 'Starting…' : pending.includes('inputs') ? 'Loading inputs…' : 'Run'}
           </button>
         </>}
       </div>
@@ -215,7 +228,7 @@ export function App() {
           <input aria-label="Workflow description" placeholder="What does this workflow do?" value={workflow.doc || ''} onFocus={() => { descriptionVisit.current = {}; }}
             onChange={event => { const value = event.target.value; setWorkflow(current => set(current, ['doc'], value), descriptionVisit.current); }} />
         </label>}
-        {!runId && enterInputs && <form id="run-inputs" className="run-panel" onSubmit={event => { event.preventDefault(); if (!runDisabled) run(); }}>
+        {!runId && enterInputs && <form id="run-inputs" className="run-panel" onSubmit={event => { event.preventDefault(); requestRun('start'); }}>
           <h2>Run inputs</h2>
           {messages.filter(message => !message.input).map((message, i) => <p className="problem" key={i}>{message.message}</p>)}
           <div className="run-fields">{Object.entries(workflow.inputs || {}).map(([name, declaration]) => {
@@ -229,7 +242,7 @@ export function App() {
               {messages.filter(message => message.input === name).map((message, i) => <p className="problem" key={i}>{message.message}</p>)}
             </div>;
           })}</div>
-          <div className="row"><button ref={runButton} type="submit" className="primary" disabled={runDisabled} title="Start run (Ctrl/Cmd+Enter)">{pending.includes('run') ? 'Starting…' : 'Start run'}</button>
+          <div className="row"><button ref={runButton} type="submit" className="primary" disabled={runDisabled} title={(runReason || 'Start run') + ' (Ctrl/Cmd+Enter)'}>{pending.includes('run') ? 'Starting…' : 'Start run'}</button>
             <button type="button" onClick={() => setEnterInputs(false)}>Cancel</button></div>
         </form>}
         {shown?.error && <div className="notice problem">{shown.error}</div>}
@@ -258,6 +271,7 @@ export function App() {
         </tr>)}</tbody>
       </table>}
     </section>}
+    {guide && <Guide text={tutorial} onClose={() => setGuide(false)} />}</div>
     {preview && <Dialog className="box-editor" label="Run from here preview" onClose={() => setPreview(null)}>
         <div className="toolbar"><strong>Run from here</strong><button disabled={busy} onClick={() => from(preview.source.step, true)}>Start run</button><button disabled={busy} onClick={() => setPreview(null)}>Back</button></div>
         <Source source={preview.source} showRun={showRun} fail={setError} />

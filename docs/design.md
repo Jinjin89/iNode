@@ -164,47 +164,11 @@ outputs: {ok: =sent.ok}
 
 ## The one-page tutorial
 
-> # iNode in one page
->
-> **The one idea.** A node takes named inputs, does one job, and returns named outputs. Everything you use or build in iNode is a node.
->
-> **1. Start.** `inode start` opens the editor in your browser.
->
-> **2. Run a node.** Find `http.get` in the node list and drag it onto the canvas. Type a URL into its `url` field and press **Run**. The result appears on the node.
->
-> **3. Connect nodes.** Drag in `html.to_text` and draw a line from `body` to `html`. Press **Run**, then click either step to see what it received and what it returned.
->
-> **4. Make it your own node.** Click the `url` field and choose **Ask for this when run**. Click the `text` output and choose **Give this back**. Save as `page_text`. It is now in your node list, with one input and one output, like any other node.
->
-> **5. Do it many times.** Start a new workflow. Drag in `map`, drop `page_text` into its `do` box, and type a few URLs into `over`. Press **Run**. A node inside a box does not run by itself; `map` runs it once for each item.
->
-> **6. Run it without you.** Open **When**, choose "every day", set a time, choose what to run, and switch it on.
->
-> **7. Get more nodes.** Open **Plugins** and install one. Its nodes appear in your node list.
->
-> **From the command line.** The same things work there: `inode run page_text url=https://example.com`, `inode runs`, `inode trigger add …`, `inode add <plugin>`. Workflows are saved as short text files you can read; editing them by hand is the advanced route.
+[The tutorial](tutorial.md) is the one-page acceptance test, shared by the Guide, `inode help` and agents.
 
 ## Writing a node
 
-For plugin authors. Create `nodes/count_words.node`:
-
-```yaml
-doc: Count the words in a text
-inputs:  {text: text}
-outputs: {count: number}
-no_outside_effect: true
-run: python count_words.py
-```
-
-and `nodes/count_words.py`:
-
-```python
-import json, sys
-text = json.load(sys.stdin)["text"]
-json.dump({"count": len(text.split())}, sys.stdout)
-```
-
-Any program that reads its inputs as JSON and prints its outputs as JSON can be a node. `count_words` is now in the node list. A plugin is a folder of such nodes with a manifest.
+A node description in `nodes/<name>.node` gives its description, inputs, outputs, optional `no_outside_effect` mark and `run` command. The command runs in that folder, reads one JSON object of inputs and prints one JSON object of outputs; see the [tutorial’s file forms](tutorial.md#the-two-file-forms). A plugin is a folder of these nodes with a manifest.
 
 ## Limits
 

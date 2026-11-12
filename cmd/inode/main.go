@@ -39,7 +39,7 @@ func command(ctx context.Context, args []string, out, diagnostic io.Writer) erro
 	if len(args) == 1 {
 		switch args[0] {
 		case "help", "--help", "-h":
-			_, err := fmt.Fprintln(out, usage)
+			_, err := fmt.Fprint(out, inode.Help(), "\n", usage, "\n")
 			return err
 		case "version", "--version":
 			_, err := fmt.Fprintln(out, "inode dev")

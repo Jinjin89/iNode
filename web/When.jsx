@@ -24,7 +24,7 @@ export function When({ catalog, perform, busy, fail, showRun }) {
   };
   return <section className="when">
     <h1>When</h1>
-    {rows.length === 0 ? <p>No triggers.</p> : <table>
+    {rows.length === 0 ? <p>Add a trigger below to start runs when something happens.</p> : <table>
       <thead><tr><th>Trigger</th><th>On</th><th>Current run</th><th>Waiting events</th><th>Last run</th><th>Last failure</th><th /></tr></thead>
       <tbody>{rows.map(row => <tr key={row.name}>
         <td><strong>{row.name}</strong><small>{instruction(row.workflow)}</small>{row.error && <p className="problem">{row.error}</p>}</td>
