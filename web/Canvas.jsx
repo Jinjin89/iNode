@@ -1,21 +1,24 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Background, Controls, Handle, Position, ReactFlow, ReactFlowProvider, getNodesBounds, getViewportForBounds, useStore, useReactFlow, useUpdateNodeInternals } from '@xyflow/react';
-import { add, content, graph, handle, parseHandle, problems, rename, runWorkflow, set, type, kind, box, inputs as nodeInputs, reference, connect, emptyReport, emptyValue, expose, move, groups, connectionProblem, unique, workflowDescription } from './model';
+import { add, content, graph, handle, parseHandle, problems, rename, set, type, kind, box, inputs as nodeInputs, reference, connect, emptyReport, emptyValue, expose, move, groups, connectionProblem, unique, workflowDescription } from './model';
 import { call, op } from './client';
+import { Duration, Value } from './Value';
 
-export function useReply(operation, args, receive, fail) {
+export function useReply(operation, args, receive, fail, interval = 0) {
   useEffect(() => {
     if (!operation) return;
-    let current = true;
-    const stream = call(operation, ...args);
+    let current = true, stream, timer;
     fail('');
-    (async () => {
+    const read = async () => {
+      stream = call(operation, ...args);
       try { for await (const value of stream) if (current) receive(value); }
       catch (error) { if (current) fail(error.message); }
-    })();
-    return () => { current = false; stream.return(); };
-  }, [operation, ...args, receive, fail]);
+      if (current && interval) timer = setTimeout(read, interval);
+    };
+    read();
+    return () => { current = false; clearTimeout(timer); stream.return(); };
+  }, [operation, ...args, receive, fail, interval]);
 }
 
 export function Dialog({ label, onClose, className, children }) {
@@ -54,7 +57,7 @@ export function NodeList({ catalog, onAdd, onOpen, opening }) {
   </aside>;
 }
 
-export function Field({ port = {}, value, onChange, catalog = [], path = [], socket, descriptions = {}, issues = [], references = true, onOpen, children, item = false, placeholder }) {
+export function Field({ port = {}, value, onChange, catalog = [], path = [], socket, descriptions = {}, issues = [], references = true, onOpen, children, item = false, placeholder, required = false }) {
   const shape = kind(port);
   const json = !['text', 'secret', 'number', 'bool', 'node'].includes(shape);
   const fallback = port?.default;
@@ -71,36 +74,37 @@ export function Field({ port = {}, value, onChange, catalog = [], path = [], soc
   useEffect(() => {
     setDraft(text); setEditing(false); setError(''); control.current?.setCustomValidity('');
   }, [text, shape]);
-  const clear = onChange && (value !== undefined || error) && <button type="button" className="quiet clear" title={item ? 'Remove item' : 'Clear input'} onClick={() => {
+  const clear = (value !== undefined || error) && <button type="button" className="quiet clear" title={item ? 'Remove item' : 'Clear input'} onClick={() => {
     setEditing(false); setError(''); control.current?.setCustomValidity(''); onChange(undefined);
   }}>{item ? '×' : shape === 'list' ? 'Clear list' : 'Clear'}</button>;
   const drop = {
-    onDragOver: event => { if (onChange && box(port) && event.dataTransfer.types.includes(nodeMime)) { event.preventDefault(); event.stopPropagation(); } },
-    onDrop: event => { if (onChange && box(port) && event.dataTransfer.getData(nodeMime)) { event.preventDefault(); event.stopPropagation(); onChange({ use: event.dataTransfer.getData(nodeMime) }); } },
+    onDragOver: event => { if (box(port) && event.dataTransfer.types.includes(nodeMime)) { event.preventDefault(); event.stopPropagation(); } },
+    onDrop: event => { if (box(port) && event.dataTransfer.getData(nodeMime)) { event.preventDefault(); event.stopPropagation(); onChange({ use: event.dataTransfer.getData(nodeMime) }); } },
   };
   const structured = shape === 'object' && port.fields && (shownValue === undefined || shownValue !== null && typeof shownValue === 'object' && !Array.isArray(shownValue))
     || shape === 'list' && kind(port.item) !== 'any' && port.item && (shownValue === undefined || Array.isArray(shownValue));
-  const actions = onChange && <div className="field-actions">{children}
+  const actions = <div className="field-actions">{children}
     {shownValue === undefined && (shape === 'text' || structured && (shape === 'list' || !Object.keys(port.fields).length)) &&
       <button type="button" className="quiet" onClick={() => onChange(emptyValue(port))}>Use empty {shape}</button>}
     {clear}
   </div>;
-  const handle = socket?.(path, port, !onChange || !structured);
-  if (references && reference(shownValue) && (onChange || box(port))) return <div className={'field linked ' + (box(port) ? 'box' : '')} {...drop}>{handle}<code>{shownValue}</code>{actions}</div>;
-  const child = (path, item, data, change, childSocket, props = {}) => <Field port={item} value={data} onChange={onChange && change} catalog={catalog}
+  const handle = socket?.(path, port, !onChange || !structured && !box(port));
+  if (!onChange) return <div className="field">{handle}<Value value={value} port={port} /></div>;
+  if (references && reference(shownValue)) return <div className={'field linked ' + (box(port) ? 'box' : '')} {...drop}>{handle}<code>{shownValue}</code>{actions}</div>;
+  const child = (path, item, data, change, childSocket, props = {}) => <Field port={item} value={data} onChange={change} catalog={catalog}
     path={path} socket={childSocket} descriptions={descriptions} references={references} onOpen={onOpen} {...props} />;
   if (box(port)) {
     const asStep = value => typeof value === 'string' ? { use: value } : value;
     const step = asStep(shownValue);
     const inline = step?.use && typeof step.use === 'object';
-    const edit = onChange && ((next, group) => onChange(current => set(asStep(current ?? shownValue), ['use'], next), group));
+    const edit = (next, group) => onChange(current => set(asStep(current ?? shownValue), ['use'], next), group);
     const fields = childSocket => Object.entries({ ...nodeInputs(step.use, step.in, catalog), ...descriptions[JSON.stringify(path)]?.inputs }).map(([name, port]) => <div className="port" key={name}>
       <label>{name}<small>{type(port)}</small></label>
       {child([...path, 'in', name], port, step.in?.[name], (next, group) => onChange(current => set(asStep(current ?? shownValue), ['in', name], next), group), childSocket, { placeholder: 'Given when the box is called' })}
     </div>);
     return <div className="box nodrag nowheel" {...drop}>
       {handle}<div className="box-title">Box</div>
-      <select aria-label="Node in box" disabled={!onChange} value={inline ? 'inline' : step?.use ? 'node:' + step.use : ''} onChange={event => onChange({
+      <select aria-label="Node in box" required={required} value={inline ? 'inline' : step?.use ? 'node:' + step.use : ''} onChange={event => onChange({
         use: event.target.value === 'inline' ? { inputs: {}, steps: {}, outputs: {} } : event.target.value.slice(5),
       })}>
         <option value="" disabled>{placeholder || 'Choose a node'}</option><option value="inline">Inline workflow</option>{catalog.map(node => <option key={node.name} value={'node:' + node.name}>{node.name}</option>)}
@@ -117,7 +121,6 @@ export function Field({ port = {}, value, onChange, catalog = [], path = [], soc
       {error && <p className="problem">{error}</p>}
     </div>;
   }
-  if (!onChange) return <div className="field">{handle}<pre className="value">{shownValue === undefined ? 'Not filled' : JSON.stringify(shownValue, null, 2)}</pre></div>;
   if (structured) {
     const list = shape === 'list';
     const values = shownValue || (list ? [] : {});
@@ -144,7 +147,7 @@ export function Field({ port = {}, value, onChange, catalog = [], path = [], soc
     } catch (error) { setError(error.message); return error.message; }
   };
   const entry = {
-    ref: control, value: editing ? draft : text, 'data-draft': editing && draft !== text,
+    ref: control, required, value: editing ? draft : text, 'data-draft': editing && draft !== text,
     onFocus: () => { if (!editing) setDraft(text); },
     onChange: event => { setDraft(event.target.value); setEditing(true); event.target.setCustomValidity(validate(event.target.value)); },
     onBlur: event => {
@@ -161,11 +164,11 @@ export function Field({ port = {}, value, onChange, catalog = [], path = [], soc
     },
   };
   return <div className="field nodrag">{handle}
-    {shape === 'secret' ? <select aria-label="Secret name" value={shown ?? ''} onChange={event => onChange(references && event.target.value.startsWith('=') ? '=' + event.target.value : event.target.value)}>
+    {shape === 'secret' ? <select aria-label="Secret name" required={required} value={shown ?? ''} onChange={event => onChange(references && event.target.value.startsWith('=') ? '=' + event.target.value : event.target.value)}>
       <option value="" disabled>{placeholder || 'Choose a secret'}</option>
       {[...new Set([...(shown ? [shown] : []), ...secrets])].map(name => <option key={name}>{name}</option>)}
     </select> : json ? <textarea {...entry} aria-label="JSON value" placeholder={placeholder} spellCheck="false" /> :
-      shape === 'bool' ? <select aria-label="bool value" value={shown === undefined ? '' : String(shown)}
+      shape === 'bool' ? <select aria-label="bool value" required={required} value={shown === undefined ? '' : String(shown)}
         onChange={event => onChange(event.target.value === 'true')}><option value="" disabled>{placeholder || 'Choose true or false'}</option><option value="true">True</option><option value="false">False</option></select> :
       <input {...entry} aria-label={shape + ' value'} type={shape === 'number' ? 'number' : 'text'} step={shape === 'number' ? 'any' : undefined}
         placeholder={fallback === undefined ? placeholder || 'Not filled' : String(fallback)} />}
@@ -179,56 +182,59 @@ export function Messages({ items }) {
 }
 
 function Step({ id, data }) {
-  const { kind, name, step, info, ports, inputs, outputs, record, workflow, catalog, edit, report, scope, onOpen, notice, propose } = data;
+  const { kind, name, step, info, ports, inputs, outputs, record, workflow, catalog, edit, report, scope, onOpen, notice, propose, onUse, pendingSource, wire } = data;
   const update = useUpdateNodeInternals();
   useEffect(() => { update(id); }, [id, workflow, record, report, update]);
   const where = kind === 'step' ? scope + '/' + name : scope;
+  const at = input => edit ? problems(report, where, input) : [];
   const message = path => notice?.path === handle(path) && <span className="socket-message" role="alert">{notice.message}</span>;
   const target = (path, port, flat = true) => <>
-    {flat && !box(port) && report.references.filter(ref => ref.path.length > path.length && path.every((part, i) => ref.path[i] === part)).map(ref =>
+    {flat && report.references.filter(ref => ref.path.length > path.length && path.every((part, i) => ref.path[i] === part)).map(ref =>
       <Handle key={handle(ref.path)} type="target" position={Position.Left} id={handle(ref.path)} isConnectable={false} style={{ visibility: 'hidden' }} />)}
-    <Handle type="target" position={Position.Left} id={handle(path)} title="Connect an output here" isConnectable={!!edit && !notice?.checking} />
+    <Handle type="target" position={Position.Left} id={handle(path)} title={edit ? 'Connect an output here' : undefined} isConnectable={!!edit && !notice?.checking}
+      onClickCapture={event => { if (pendingSource) { event.stopPropagation(); wire(pendingSource, path); } }} />
     {message(path)}
   </>;
-  const source = path => <><Handle type="source" position={Position.Right} id={handle(path)} title="Connect this output to an input" isConnectable={!!edit && !notice?.checking} />{message(path)}</>;
+  const source = path => <><Handle type="source" position={Position.Right} id={handle(path)} title={edit ? 'Connect this output to an input' : undefined} isConnectable={!!edit && !notice?.checking && !pendingSource} />{message(path)}</>;
   const field = (port, value, path, children) => <Field port={port} value={value} onChange={edit && ((next, group) => edit(current => set(current, path, next), group))} catalog={catalog} path={path} socket={target} descriptions={report.nodes} onOpen={onOpen}
-    issues={problems(report, where, path.slice(kind === 'step' ? 3 : 0).join('.'))} children={children} />;
-  const issues = kind === 'step' ? problems(report, where) : Object.keys(ports).flatMap(key => problems(report, scope, kind === 'inputs' ? key : 'outputs.' + key));
-  return <article className={'step ' + (record?.state || '') + (issues.length ? ' has-problem' : '')}>
-    <header><strong>{kind === 'step' ? name : kind === 'inputs' ? 'Inputs' : 'Outputs'}</strong>{record?.state && <span className="state">{record.state}</span>}</header>
+    issues={at(path.slice(kind === 'step' ? 3 : 0).join('.'))} children={children} />;
+  const issues = kind === 'step' ? at() : Object.keys(ports).flatMap(key => at(kind === 'inputs' ? key : 'outputs.' + key));
+  return <article className={'step ' + (kind === 'step' ? record?.state || '' : '') + (issues.length ? ' has-problem' : '')}>
+    <header><strong>{kind === 'step' ? name : kind === 'inputs' ? 'Inputs' : 'Outputs'}</strong>{kind === 'step' && record && <span className="step-status"><span className={'state ' + record.state}>{record.state}</span><Duration record={record} /></span>}</header>
     {kind === 'step' ? <>
-      <div className="node-name">{typeof step.use === 'string' ? step.use : 'Inline workflow'}<span className="after-source" title="Connect to after">{source([name])}</span>
-        <span className="after-target" title="Run after another step">{target(['steps', name, 'after'])}</span></div>
+      <div className="node-name">{typeof step.use === 'string' ? step.use : 'Inline workflow'}<span className="after-source" title={edit ? 'Connect to after' : undefined}>{source([name])}</span>
+        <span className="after-target" title={edit ? 'Run after another step' : undefined}>{target(['steps', name, 'after'])}</span></div>
       <p className="node-doc">{info.doc}</p>
+      {record?.error && <p className="problem step-error">{record.error}</p>}
       {Object.entries(inputs).map(([key, port]) => <div className="port" key={key}>
         <label>{key}<small>{type(port)}</small></label>
         {field(port, record ? record.inputs?.[key] : step.in?.[key], ['steps', name, 'in', key], edit && <button className="quiet expose" disabled={notice?.checking} onClick={() => propose(current => ({ workflow: expose(current, 'inputs', name, key, port), path: ['steps', name, 'in', key] }))}>Ask for this when run</button>)}
-        <Messages items={problems(report, where, key)} />
+        <Messages items={at(key)} />
       </div>)}
-      <Messages items={problems(report, where, 'after')} />
+      <Messages items={at('after')} />
       <div className="outputs">{Object.entries(outputs).map(([key, port]) => <div className="port output" key={key}>
         <span>{key}<small>{type(port)}</small></span>{source([name, key])}
         {edit && <div className="field-actions"><button className="quiet expose" disabled={notice?.checking} onClick={() => propose(current => ({ workflow: expose(current, 'outputs', name, key), path: ['outputs', unique(current.outputs, key)], socket: [name, key] }))}>Give this back</button></div>}
-        {record?.outputs && <pre>{JSON.stringify(record.outputs[key])}</pre>}
+        {record?.outputs && <Value value={record.outputs[key]} port={port} path={[name, key]} onUse={onUse} />}
       </div>)}</div>
-      <Messages items={problems(report, where, 'use')} />
+      <Messages items={at('use')} />
     </> : Object.entries(ports).map(([key, port]) => <div className={'port ' + (kind === 'inputs' ? 'output' : '')} key={key}>
       <span>{key}<small>{kind === 'inputs' ? type(port) : ''}</small></span>
-      {kind === 'inputs' ? source(['inputs', key]) : field('any', port, ['outputs', key])}
-      {kind === 'inputs' && record && <><small>{record.source?.inputs[key]?.join('.')}</small><pre>{JSON.stringify(record.inputs?.[key], null, 2)}</pre></>}
-      <Messages items={problems(report, scope, kind === 'inputs' ? key : 'outputs.' + key)} />
+      {kind === 'inputs' ? source(['inputs', key]) : record ? <>{target(['outputs', key])}<Value value={record.outputs?.[key]} port={workflowDescription(report)?.outputs?.[key]} /></> : field('any', port, ['outputs', key])}
+      {kind === 'inputs' && record && <><small>{record.source?.inputs[key]?.join('.')}</small><Value value={record.inputs?.[key]} port={port} /></>}
+      <Messages items={at(kind === 'inputs' ? key : 'outputs.' + key)} />
     </div>)}
   </article>;
 }
 const nodeTypes = { step: Step };
 
-function Fit({ ready, nodes }) {
+function Fit({ ready, nodes, focus }) {
   const fitted = useRef(false);
   const frame = useStore(state => {
     if (!ready || !state.width || !state.height || fitted.current) return null;
     const measured = [...state.nodeLookup.values()];
     if (nodes.some(node => state.nodeLookup.get(node.id)?.data !== node.data) || !measured.length || measured.some(node => !node.measured?.width || !node.measured?.height)) return null;
-    return getViewportForBounds(getNodesBounds(measured), state.width, state.height, state.minZoom, 1, 0.1);
+    return getViewportForBounds(getNodesBounds(focus ? measured.filter(node => node.id === focus) : measured), state.width, state.height, state.minZoom, 1, 0.1);
   });
   const { setViewport } = useReactFlow();
   useEffect(() => {
@@ -257,7 +263,7 @@ export function Canvas(props) {
   return <ReactFlowProvider><CanvasView {...props} /></ReactFlowProvider>;
 }
 
-function CanvasView({ workflow, catalog, onEdit, record, onFrom, onOpen, opening, onCheck, scope = '(inline)', nested = false }) {
+function CanvasView({ workflow, catalog, onEdit, record, onFrom, onCall, onOpen, opening, onCheck, onUse, pendingSource, onConnected, scope = '(inline)' }) {
   const [selected, select] = useState('');
   const [notice, setNotice] = useState(null);
   const canvas = useRef(null), drag = useRef({}), latest = useRef({ workflow, onEdit }), connecting = useRef(0);
@@ -269,8 +275,9 @@ function CanvasView({ workflow, catalog, onEdit, record, onFrom, onOpen, opening
   const [error, setError] = useState('');
   const key = content(workflow);
   const definition = useMemo(() => JSON.parse(key), [key]);
-  const receive = useCallback(report => { setChecked({ document: key, report }); onCheck?.(report); }, [key, onCheck]);
-  useReply(op.check, [definition], receive, setError);
+  const receive = useCallback(report => { const result = { document: key, report }; setChecked(result); onCheck?.(result); }, [key, onCheck]);
+  const fail = useCallback(error => { setError(error); if (error) onCheck?.({ document: key, report: emptyReport, error }); }, [key, onCheck]);
+  useReply(op.check, [definition], receive, fail);
   const report = checked.report;
   const fresh = checked.document === key;
   const id = useId();
@@ -279,6 +286,10 @@ function CanvasView({ workflow, catalog, onEdit, record, onFrom, onOpen, opening
   const sizes = useStore(state => Object.fromEntries([...state.nodeLookup].map(([id, node]) => [id, node.measured])),
     (a, b) => Object.keys(a).length === Object.keys(b).length && Object.keys(a).every(id => a[id]?.width === b[id]?.width && a[id]?.height === b[id]?.height));
   const derived = graph(workflow, catalog, record, report, scope, sizes, width);
+  const failed = Object.keys(records).find(name => records[name].state === 'failed');
+  useEffect(() => {
+    if (failed) select(handle(['steps', failed]));
+  }, [failed, record?.state]);
   const selection = selected ? parseHandle(selected) : [];
   const name = selection[0] === 'steps' && selection.length === 2 ? selection[1] : '';
   const step = workflow.steps?.[name];
@@ -286,9 +297,9 @@ function CanvasView({ workflow, catalog, onEdit, record, onFrom, onOpen, opening
   const boundary = selection.length === 1 ? selection[0] : '';
   const remove = () => { onEdit(current => set(current, selection, undefined)); select(''); };
   useEffect(() => {
-    if (nested) return;
     const key = event => {
       if (event.defaultPrevented || event.target.closest('dialog') !== canvas.current.closest('dialog')) return;
+      if (event.key === 'Escape' && pendingSource) { onConnected(); event.preventDefault(); return; }
       if (event.key === 'Escape' && selected) { select(''); event.preventDefault(); }
       if (onEdit && !event.target.closest('input, textarea, select, [contenteditable]') && ['Delete', 'Backspace'].includes(event.key)
         && (step || derived.edges.some(edge => edge.id === selected))) { event.preventDefault(); remove(); }
@@ -313,16 +324,18 @@ function CanvasView({ workflow, catalog, onEdit, record, onFrom, onOpen, opening
         if (content(before) !== content(latest.current.workflow)) { show('The workflow changed; connect again.'); return; }
         const problem = connectionProblem(report, next.path, scope);
         if (problem) show(problem.message);
-        else { setNotice(null); latest.current.onEdit(current => ({ ...next.workflow, view: current.view })); }
+        else { setNotice(null); latest.current.onEdit(current => ({ ...next.workflow, view: current.view })); return true; }
       }
     } catch (error) { show(error.message); }
   };
-  const nodes = derived.nodes.map(node => ({ ...node, selected: node.id === selected, data: { ...node.data, workflow, catalog, edit: onEdit, report, scope, onOpen, notice, propose } }));
+  const wire = (source, target) => propose(current => ({ workflow: connect(current, source, target), path: target })).then(accepted => { if (accepted) onConnected?.(); });
+  const nodes = derived.nodes.map(node => ({ ...node, selected: node.id === selected, data: { ...node.data, workflow, catalog, edit: onEdit, report, scope, onOpen, notice, propose, onUse, pendingSource, wire } }));
   return <div className="canvas-layout" ref={canvas} data-editable={onEdit ? '' : undefined}>
-    {!nested && (onEdit || onOpen) && <NodeList catalog={catalog} onAdd={onEdit && addStep} onOpen={onOpen} opening={opening} />}
+    {!record && onEdit && <NodeList catalog={catalog} onAdd={addStep} onOpen={onOpen} opening={opening} />}
     <div className="canvas-main">
-    {error && <p className="notice problem">{error}</p>}
-    <div className={'canvas ' + (nested ? 'nested' : '')}>
+    {!record && error && <p className="notice problem">{error}</p>}
+    {pendingSource && <div className="notice use-value">Use <code>={pendingSource.join('.')}</code> · Choose an input to connect.<button onClick={onConnected}>Cancel (Escape)</button></div>}
+    <div className="canvas">
       <div className="drawing" onDragOver={event => { if (onEdit && event.dataTransfer.types.includes(nodeMime)) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; } }}
         onDrop={event => { const name = event.dataTransfer.getData(nodeMime); if (onEdit && name) { event.preventDefault(); addStep(name, flow.screenToFlowPosition({ x: event.clientX, y: event.clientY })); } }}>
         <ReactFlow id={id} nodes={nodes} edges={derived.edges.map(edge => ({ ...edge, selected: edge.id === selected }))} nodeTypes={nodeTypes} minZoom={0.15} maxZoom={1.5}
@@ -335,9 +348,9 @@ function CanvasView({ workflow, catalog, onEdit, record, onFrom, onOpen, opening
               return next;
             }, drag.current);
           }}
-          onConnect={edge => propose(current => ({ workflow: connect(current, parseHandle(edge.sourceHandle), parseHandle(edge.targetHandle)), path: parseHandle(edge.targetHandle) }))}
+          onConnect={edge => wire(parseHandle(edge.sourceHandle), parseHandle(edge.targetHandle))}
           onEdgeClick={(_, edge) => { if (onEdit) select(edge.id); }}>
-          <Fit key={record?.state + ':' + !!Object.keys(workflow.steps || {}).length} ready={fresh} nodes={nodes} /><Background gap={22} size={1} /><Controls showInteractive={false} />
+          <Fit key={record?.state + ':' + failed + ':' + !!Object.keys(workflow.steps || {}).length} ready={fresh} nodes={nodes} focus={failed && handle(['steps', failed])} /><Background gap={22} size={1} /><Controls showInteractive={false} />
         </ReactFlow>
         {onEdit && !Object.keys(workflow.steps || {}).length && <div className="empty-canvas"><strong>Add your first step</strong><p>Click a node on the left, or drag it onto the canvas.</p></div>}
       </div>
@@ -353,18 +366,18 @@ function CanvasView({ workflow, catalog, onEdit, record, onFrom, onOpen, opening
             <button title="Delete step (Delete / Backspace)" onClick={remove}>Delete step</button>
           </div>}
           {child ? <>
-            <p className={'state ' + child.state}>{child.state}</p>{child.error && <p className="problem">{child.error}</p>}
-            <h4>Received</h4><pre>{JSON.stringify(child.inputs, null, 2)}</pre><h4>Returned</h4><pre>{JSON.stringify(child.outputs, null, 2)}</pre>
-            {Object.entries(child.steps || {}).map(([key, call]) => <details key={key}>
-              <summary>Run {key} · {call.node} · {call.state}</summary><Canvas workflow={runWorkflow(call)} catalog={catalog} record={call} nested />
-            </details>)}
+            <p><span className={'state ' + child.state}>{child.state}</span> <Duration record={child} /></p>{child.error && <p className="problem">{child.error}</p>}
+            <h4>Received</h4><Value value={child.inputs ?? undefined} port={{ fields: derived.nodes.find(node => node.id === selected)?.data.inputs }} />
+            <h4>Returned</h4><Value value={child.outputs ?? undefined} port={{ fields: derived.nodes.find(node => node.id === selected)?.data.outputs }} path={[name]} onUse={onUse} />
+            {onCall && Object.entries(child.steps || {}).map(([key, call]) => <button className="call" key={key} onClick={() => onCall([...(record.workflow ? [name] : []), key])}>
+              Call {key} · {call.node} · <span className={'state ' + call.state}>{call.state}</span> · <Duration record={call} />
+            </button>)}
           </> : <p>Run this workflow to see what this step received and returned.</p>}
-          {typeof step.use === 'object' && <Canvas workflow={step.use} catalog={catalog} nested />}
-          <Messages items={problems(report, scope + '/' + name)} />
+          {!record && <Messages items={problems(report, scope + '/' + name)} />}
         </>}
         {boundary && <>
           <h3>{boundary === 'inputs' ? 'Inputs' : 'Outputs'}</h3>
-          {Object.entries(workflow[boundary] || {}).map(([key, port]) => <div className="boundary" key={key}>
+          {record ? <Value value={record[boundary]} port={{ fields: workflowDescription(report)?.[boundary] }} /> : Object.entries(workflow[boundary] || {}).map(([key, port]) => <div className="boundary" key={key}>
             {onEdit ? <div className="row">
               <Named name={key} names={Object.keys(workflow[boundary])} onChange={fresh && (next => { if (next !== key) onEdit(current => rename(current, boundary, key, next, report)); })} />
               <button title="Delete" onClick={() => onEdit(current => set(current, [boundary, key], undefined))}>×</button>
@@ -387,12 +400,12 @@ function CanvasView({ workflow, catalog, onEdit, record, onFrom, onOpen, opening
         </>}
       </aside>}
     </div>
-    <details className={'report ' + (report.problems.length ? 'has-problem' : '')} open={report.problems.length > 0}>
+    {!record && <details className={'report ' + (report.problems.length ? 'has-problem' : '')} open={report.problems.length > 0}>
       <summary>{!fresh ? 'Checking… · ' : ''}{report.problems.length ? report.problems.length + ' problems' : 'Checked'}{report.unchecked.length ? ' · ' + report.unchecked.length + ' unchecked' : ''}</summary>
       {[...report.problems, ...report.unchecked].map((problem, i) => <p key={i} className={i < report.problems.length ? 'problem' : 'unchecked'}>
         {problem.step}, {problem.input}: {problem.message}
       </p>)}
-    </details>
+    </details>}
     </div>
   </div>;
 }

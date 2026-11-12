@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Field, Messages, useReply } from './Canvas';
 import { call, op } from './client';
 import { emptyReport, inputs, problems, set, type } from './model';
@@ -8,16 +8,7 @@ export function When({ catalog, perform, busy, fail, showRun }) {
   const [draft, edit] = useState({ inputs: {}, steps: { event: { use: '', in: {} }, run: { use: '', in: {}, after: ['event'] } }, outputs: {} });
   const [report, setReport] = useState(emptyReport);
   useReply(op.check, [draft], setReport, fail);
-  useEffect(() => {
-    let current = true, timer;
-    const read = async () => {
-      try { for await (const rows of call(op['trigger list'])) if (current) setRows(rows); }
-      catch (error) { if (current) fail(error.message); }
-      if (current) timer = setTimeout(read, 1000);
-    };
-    read();
-    return () => { current = false; clearTimeout(timer); };
-  }, [fail]);
+  useReply(op['trigger list'], [], setRows, fail, 1000);
   const change = (operation, ...args) => perform(async () => {
     for await (const _ of call(operation, ...args)) {}
     for await (const rows of call(op['trigger list'])) setRows(rows);

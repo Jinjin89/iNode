@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { add, box, connect, connectionProblem, content, emptyReport, emptyValue, expose, graph, groups, handle, history, kind, move, parseHandle, layout, reference, rename, runWorkflow, set, type, workflowDescription, type Workflow, type Description, type Reference, type History } from './model';
+import { add, box, canReference, connect, connectionProblem, content, copyText, duration, emptyReport, emptyValue, expose, filterRuns, graph, groups, handle, history, inputValues, kind, move, parseHandle, layout, reference, rename, runMessages, runTrail, runWorkflow, set, textPreview, type, workflowDescription, type Workflow, type Description, type Reference, type History, type Run } from './model';
 
 const catalog: Description[] = [
   { name: 'text.upper', inputs: { text: 'text' }, outputs: { text: 'text' } },
@@ -109,11 +109,20 @@ describe('document to graph', () => {
     expect('record' in result.nodes[0].data && result.nodes[0].data.record?.inputs.text).toBe('hi');
     expect('outputs' in a.data && a.data.outputs).toEqual({ text: 'any' });
     expect(flow).toEqual(set(tiny, ['view', 'positions', handle(['steps', 'a'])], { x: 7, y: 9 }));
-    expect(runWorkflow({ node: 'text.upper', state: 'done', inputs: { text: 'hi' }, outputs: { text: 'HI' } }).steps?.node.in).toEqual({ text: 'hi' });
+    expect(runWorkflow({ node: 'text.upper', state: 'done', inputs: { text: 'hi' }, outputs: { text: 'HI' } }).steps?.node.use).toBe('text.upper');
   });
   it('keeps a box type when showing a run', () => {
     const m = graph({ steps: { m: { use: 'map' } } }, catalog, { node: 'tiny', state: 'done', inputs: {}, outputs: {}, workflow: { steps: { m: { use: 'map' } } }, steps: { m: { node: 'map', state: 'done', inputs: { do: { use: 'text.upper' }, over: ['hi'] }, outputs: { result: ['HI'] } } } }).nodes[1];
     expect('inputs' in m.data && m.data.inputs?.do).toBe('node(T) gives U');
+  });
+  it('shows recorded boundary values and hides current checker markings in a run', () => {
+    const run: Run = { node: 'tiny', state: 'done', inputs: { text: 'hi' }, outputs: { text: 'HI' }, workflow: tiny };
+    const checked = { ...report, references: refs.map(ref => ({ ...ref, bad: true, unchecked: true })), problems: [{ step: '(inline)/b', input: 'after', message: 'changed today' }],
+      nodes: { null: { inputs: { text: { type: 'text', kind: 'text' } } } } };
+    const result = graph(tiny, catalog, run, checked);
+    expect(result.edges.map(edge => edge.className)).toEqual(['', '', '', 'after']);
+    expect(result.nodes[0].data).toMatchObject({ ports: checked.nodes.null.inputs, record: run });
+    expect(result.nodes.at(-1)?.data).toMatchObject({ record: run });
   });
   it('handles escaped text, identifiers and both port forms', () => {
     expect(parseHandle(handle(['steps', 'a"雪', 'in', 'x']))).toEqual(['steps', 'a"雪', 'in', 'x']);
@@ -125,6 +134,70 @@ describe('document to graph', () => {
     expect(kind({ type: 'arbitrary display text', kind: 'number' })).toBe('number');
     expect(type('number')).toBe('number');
     expect(type({ type: 'bool', default: false })).toBe('bool');
+  });
+});
+
+describe('running and values', () => {
+  const waiting: Run = { node: 'tiny', state: 'waiting', inputs: {}, outputs: {} };
+  it('selects runs and their breadcrumb paths from the original record tree at any depth', () => {
+    const leaf: Run = { ...waiting, node: 'text.upper' };
+    const inside: Run = { ...waiting, node: 'upper', workflow: { inputs: { text: 'text' }, steps: { upper: { use: 'text.upper', in: { text: '=inputs.text' } } }, outputs: { text: '=upper.text' } }, steps: { upper: leaf } };
+    const map: Run = { ...waiting, node: 'map', steps: { '1': inside } };
+    const root: Run = { ...waiting, node: 'map_words', workflow: { steps: { words: { use: 'map', in: { over: ['hi'], do: 'upper' } } }, outputs: { words: '=words.result' } }, steps: { words: map } };
+    const path = ['words', '1', 'upper'];
+    const trail = runTrail(root, path);
+    expect(trail.map(entry => entry.label)).toEqual(['map_words', 'words', 'call 1', 'upper']);
+    expect(trail.map(entry => entry.path)).toEqual([[], ['words'], ['words', '1'], path]);
+    expect(trail.map(entry => entry.run)).toEqual([root, map, inside, leaf]);
+    expect(trail.at(-1)?.run).toBe(leaf);
+    expect(runTrail(root, trail[2].path).at(-1)?.run).toBe(inside);
+    expect(runTrail(root, [])).toEqual([{ run: root, label: 'map_words', path: [] }]);
+    expect(path).toEqual(['words', '1', 'upper']);
+  });
+  it('keeps plain recorded inputs out of a single-node diagram’s binding syntax', () => {
+    const record = { ...waiting, inputs: { value: '=node.value' }, outputs: { value: '=node.value' } };
+    expect(runWorkflow(record)).toEqual({ steps: { node: { use: 'tiny' } }, outputs: { value: '=node.value' } });
+    expect(record.inputs).toEqual({ value: '=node.value' });
+  });
+  it('projects remembered inputs without treating values as workflow binding syntax', () => {
+    const workflow = { inputs: { text: { type: 'text', default: 'hi' }, n: 'number', flag: 'bool', data: 'object' } };
+    const values = { text: '=plain text', n: 0, flag: false, data: { x: [1] }, removed: 2 };
+    expect(inputValues(workflow, values)).toEqual({ text: '=plain text', n: 0, flag: false, data: { x: [1] } });
+    expect(inputValues(workflow)).toEqual({});
+    expect(inputValues({}, values)).toEqual({});
+  });
+  it('places the backend message beside the named input without changing its words', () => {
+    const messages = ['input "text": supply text', 'input "data.count": needs number', 'input "a\\\"b": missing', 'unknown node: open the workflow'];
+    expect(runMessages(messages.join('\n'), ['text', 'data', 'a"b'])).toEqual(messages.map((message, i) => ({ message, input: ['text', 'data', 'a"b', undefined][i] })));
+    expect(runMessages('', ['text'])).toEqual([]);
+  });
+  it('formats waiting, finished and active durations from recorded times', () => {
+    expect(duration(waiting)).toBe('—');
+    const run = { ...waiting, started: '2026-01-01T00:00:00Z' };
+    expect(duration({ ...run, finished: run.started })).toBe('<1 ms');
+    expect(duration({ ...run, finished: '2026-01-01T00:00:00.012Z' })).toBe('12 ms');
+    expect(duration({ ...run, finished: '2026-01-01T00:00:01.234Z' })).toBe('1.2 s');
+    expect(duration(run, Date.parse(run.started) + 2000)).toBe('2.0 s');
+  });
+  it('copies text plainly and clips only the displayed text', () => {
+    expect(copyText('hi')).toBe('hi');
+    expect(copyText({ a: [false, 2] })).toBe(JSON.stringify({ a: [false, 2] }, null, 2));
+    expect(copyText(null)).toBe('null');
+    expect(textPreview('hi')).toBe('hi');
+    expect(textPreview('x'.repeat(401))).toHaveLength(400);
+    expect(textPreview(Array.from({ length: 9 }, (_, i) => String(i)).join('\n'))).toBe('0\n1\n2\n3\n4\n5\n6\n7');
+  });
+  it('uses existing output paths, including list items, and refuses dotted keys', () => {
+    for (const path of [['a', 'json'], ['a', 'json', 'user', 'name'], ['a', 'json', 'items', 0]]) expect(canReference(path)).toBe(true);
+    for (const path of [[], ['a'], ['a', 'json', 'a.b'], ['a.b', 'text']]) expect(canReference(path)).toBe(false);
+    expect(connect(tiny, ['a', 'json', 'user', 'name'], ['steps', 'b', 'in', 'text']).steps?.b.in?.text).toBe('=a.json.user.name');
+  });
+  it('filters runs without changing the backend order', () => {
+    const runs = [{ ...waiting, node: 'words', state: 'done' }, { ...waiting, state: 'done' }, waiting];
+    expect(filterRuns(runs, '', '')).toEqual(runs);
+    expect(filterRuns(runs, 'tiny', '')).toEqual(runs.slice(1));
+    expect(filterRuns(runs, 'tiny', 'done')).toEqual([runs[1]]);
+    expect(filterRuns(runs, '', 'failed')).toEqual([]);
   });
 });
 

@@ -5,7 +5,7 @@ export type Step = { use: Definition; in?: Values; after?: string[] };
 export type Workflow = { doc?: string; inputs?: Record<string, Port>; steps?: Record<string, Step>; outputs?: Values; view?: Values };
 export type Description = { name?: string; doc?: string; trigger?: boolean; inputs?: Record<string, Port>; outputs?: Record<string, Port>; workflow?: Workflow; version?: string };
 export type Source = { run: string; step: string; inputs: Record<string, string[]> };
-export type Run = { id?: string; node: string; unsaved?: boolean; trigger?: string; source?: Source; created?: string; state: string; inputs: Values; outputs: Values; steps?: Record<string, Run>; workflow?: Workflow; error?: string };
+export type Run = { id?: string; node: string; unsaved?: boolean; trigger?: string; source?: Source; created?: string; started?: string; finished?: string; state: string; inputs: Values; outputs: Values; steps?: Record<string, Run>; workflow?: Workflow; error?: string };
 export type Problem = { step: string; input: string; message: string };
 export type Reference = { step: string; input: string; from: string[]; path: Path; bad?: boolean; unchecked?: boolean };
 export type Report = { problems: Problem[]; unchecked: Problem[]; references: Reference[]; nodes: Record<string, Description> };
@@ -22,6 +22,36 @@ export const box = (port?: Port): boolean => kind(port) === 'node';
 export const reference = (value: any): boolean => typeof value === 'string' && value.startsWith('=') && !value.startsWith('==');
 export const handle = (path: Path): string => encodeURIComponent(JSON.stringify(path));
 export const parseHandle = (id: string): Path => JSON.parse(decodeURIComponent(id));
+export const copyText = (value: any): string => typeof value === 'string' ? value : JSON.stringify(value, null, 2) ?? '';
+export const textPreview = (text: string): string => text.split('\n').slice(0, 8).join('\n').slice(0, 400);
+export const canReference = (path: Path): boolean => path.length >= 2 && path.every(part => !String(part).includes('.'));
+export const filterRuns = (runs: Run[], node: string, state: string): Run[] => runs.filter(run => (!node || run.node === node) && (!state || run.state === state));
+
+export function runTrail(run: Run, path: string[]) {
+  const trail = [{ run, label: run.node, path: [] as string[] }];
+  for (const key of path) {
+    const parent = trail.at(-1)!;
+    trail.push({ run: parent.run.steps![key], label: parent.run.workflow ? key : 'call ' + key, path: [...parent.path, key] });
+  }
+  return trail;
+}
+
+export function duration(run: Run, now = Date.now()): string {
+  if (!run.started) return '—';
+  const ms = Math.max(0, (run.finished ? Date.parse(run.finished) : now) - Date.parse(run.started));
+  return ms < 1 ? '<1 ms' : ms < 1000 ? Math.round(ms) + ' ms' : (ms / 1000).toFixed(1) + ' s';
+}
+
+export function inputValues(workflow: Workflow, values: Values = {}): Values {
+  return Object.fromEntries(Object.keys(workflow.inputs || {}).filter(name => Object.hasOwn(values, name)).map(name => [name, values[name]]));
+}
+
+export function runMessages(message: string, inputs: string[]): { input?: string; message: string }[] {
+  return message.split('\n').filter(Boolean).map(message => ({ message, input: inputs.find(name => {
+    const quoted = JSON.stringify(name);
+    return message.includes('input ' + quoted + ':') || message.includes('input ' + quoted.slice(0, -1) + '.');
+  }) }));
+}
 
 export function set(value: any, path: Path, next: any): any {
   if (!path.length) return typeof next === 'function' ? next(value) : next;
@@ -175,18 +205,18 @@ export function graph(workflow: Workflow, catalog: Description[], record?: Run, 
     edges.push({
       id: handle(ref.path), source: handle(ref.from[0] === 'inputs' ? ['inputs'] : ['steps', ref.from[0]]), target: handle(target),
       sourceHandle: handle(ref.from.slice(0, 2)), targetHandle: handle(ref.path),
-      className: ref.bad ? 'bad' : ref.unchecked ? 'unchecked' : '',
+      className: !record && ref.bad ? 'bad' : !record && ref.unchecked ? 'unchecked' : '',
     });
   }
   for (const [id, step] of Object.entries(workflow.steps || {})) {
     (step.after || []).forEach((source, i) => edges.push({
       id: handle(['steps', id, 'after', i]), source: handle(['steps', source]), target: handle(['steps', id]),
       sourceHandle: handle([source]), targetHandle: handle(['steps', id, 'after']),
-      className: 'after' + (problems(report, scope + '/' + id, 'after').length ? ' bad' : ''),
+      className: 'after' + (!record && problems(report, scope + '/' + id, 'after').length ? ' bad' : ''),
     }));
   }
   const nodes = [
-    { id: handle(['inputs']), type: 'step', position: { x: 0, y: 0 }, data: { kind: 'inputs', ports: workflow.inputs || {}, record } },
+    { id: handle(['inputs']), type: 'step', position: { x: 0, y: 0 }, data: { kind: 'inputs', ports: { ...workflow.inputs, ...workflowDescription(report)?.inputs }, record } },
     ...Object.entries(workflow.steps || {}).map(([name, step]) => {
       const info = report.nodes[JSON.stringify(['steps', name])] || describe(records[name]?.workflow || step.use, catalog);
       const returned = records[name]?.outputs;
@@ -204,12 +234,12 @@ export function graph(workflow: Workflow, catalog: Description[], record?: Run, 
           : { ...inputs(step.use, step.in, catalog), ...info.inputs },
       } };
     }),
-    { id: handle(['outputs']), type: 'step', position: { x: 0, y: 0 }, data: { kind: 'outputs', ports: workflow.outputs || {} } },
+    { id: handle(['outputs']), type: 'step', position: { x: 0, y: 0 }, data: { kind: 'outputs', ports: workflow.outputs || {}, record } },
   ];
   const positions = layout(nodes.map(node => node.id), edges, workflow.view?.positions, sizes, width);
   return { nodes: nodes.map(node => ({ ...node, measured: sizes[node.id], position: positions[node.id] })), edges };
 }
 
 export function runWorkflow(run: Run): Workflow {
-  return run.workflow || { steps: { node: { use: run.node, in: run.inputs } }, outputs: Object.fromEntries(Object.keys(run.outputs || {}).map(name => [name, '=node.' + name])) };
+  return run.workflow || { steps: { node: { use: run.node } }, outputs: Object.fromEntries(Object.keys(run.outputs || {}).map(name => [name, '=node.' + name])) };
 }
