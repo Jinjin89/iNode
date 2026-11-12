@@ -5,6 +5,14 @@ import { content, runWorkflow, set, type } from './model';
 import { When } from './When';
 import { Secrets } from './Secrets';
 
+function Source({ source, showRun, fail }) {
+  const [record, setRecord] = useState(null);
+  useReply(source && op['runs show'], [source?.run], setRecord, fail);
+  return source && <div className="toolbar">Source run <button className="quiet" onClick={() => showRun(source.run)}>{source.run}</button>
+    <span>Step {source.step}{record?.id === source.run && <> · finished {new Date(record.finished).toLocaleString()} ({Math.floor((Date.now() - new Date(record.finished)) / 1000)} seconds ago)</>}</span>
+  </div>;
+}
+
 export function App() {
   const [catalog, setCatalog] = useState([]);
   const [workflow, setWorkflow] = useState({ inputs: {}, steps: {}, outputs: {} });
@@ -18,6 +26,8 @@ export function App() {
   const [manifest, setManifest] = useState('');
   const [runInputs, setRunInputs] = useState({});
   const [enterInputs, setEnterInputs] = useState(false);
+  const [preview, setPreview] = useState(null);
+  const [returnRun, setReturnRun] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(true);
   const unsaved = JSON.stringify(workflow) !== JSON.stringify(opened.workflow);
@@ -62,7 +72,12 @@ export function App() {
       }
     }
   });
-  const showRun = id => { setRecord(previous => previous?.id === id ? previous : null); setRunId(id); setScreen('Canvas'); };
+  const showRun = id => { setPreview(null); setReturnRun(''); setRecord(previous => previous?.id === id ? previous : null); setRunId(id); setScreen('Canvas'); };
+  const from = (step, start = false) => perform(async () => {
+    for await (const value of call(op['runs from'], record.id, step, start)) {
+      if (start) showRun(value); else setPreview(value);
+    }
+  });
   return <main>
     <header className="app-header"><a className="brand" href="#" onClick={event => event.preventDefault()}>iNode<span>Local workflows</span></a>
       <nav>{['Canvas', 'Runs', 'When', 'Plugins', 'Secrets'].map(name => <button key={name} className={screen === name ? 'active' : 'quiet'} onClick={() => {
@@ -80,6 +95,7 @@ export function App() {
           <strong>{record?.node || 'Run'}</strong>
           <span className={'state ' + record?.state}>{record?.state}</span>
           <button onClick={() => { setRunId(''); setRecord(null); }}>Close run</button>
+          {record?.workflow && !record.unsaved && <button disabled={busy} onClick={() => perform(async () => { const id = record.id; await open(record.node); setReturnRun(id); })}>Open workflow</button>}
           {record && record.state !== 'running' && record.state !== 'waiting' && <button disabled={busy} onClick={() => perform(async () => {
             for await (const id of call(op['runs again'], record.id)) showRun(id);
           })}>Run again</button>}
@@ -92,6 +108,7 @@ export function App() {
             <option value="">Open workflow</option>{catalog.filter(node => node.workflow).map(node => <option key={node.name}>{node.name}</option>)}
           </select>
           <button className="quiet" disabled={busy} onClick={() => { setWorkflow({ inputs: {}, steps: {}, outputs: {} }); setOpened({ name: '', version: '', workflow: null }); setRunInputs({}); }}>New</button>
+          {returnRun && <button disabled={busy || unsaved} title={unsaved ? 'Save changes first' : undefined} onClick={() => showRun(returnRun)}>Back to run</button>}
           <input aria-label="Workflow name" readOnly={!!opened.version || busy} placeholder="Workflow name" value={opened.name} onChange={event => setOpened({ ...opened, name: event.target.value })} />
           <span className="save-state">{busy ? 'Working…' : unsaved ? 'Unsaved' : 'Saved'}</span><button disabled={busy} onClick={save}>Save</button><button className="primary" disabled={busy} onClick={() => setEnterInputs(true)}>Run</button>
         </>}
@@ -101,9 +118,10 @@ export function App() {
             onChange={event => setWorkflow(set(workflow, ['doc'], event.target.value))} />
         </label>}
         {record?.error && <div className="notice problem">{record.error}</div>}
+        <Source source={record?.source} showRun={showRun} fail={setError} />
         {runId && !record ? <p className="loading">Opening run…</p> :
           <Canvas key={record?.id || (opened.version ? opened.name : 'new')} workflow={record ? runWorkflow(record) : workflow} catalog={catalog}
-            onEdit={runId || busy ? undefined : setWorkflow} record={record} />}
+            onEdit={runId || busy ? undefined : setWorkflow} record={record} onFrom={record?.workflow && !busy ? from : undefined} />}
         {record && <details className="report" open><summary>Run outputs</summary><pre>{JSON.stringify(record.outputs, null, 2)}</pre></details>}
       </section>
     </div> : screen === 'Runs' ? <section className="runs">
@@ -111,7 +129,7 @@ export function App() {
         <thead><tr><th>Node</th><th>State</th><th>Created</th><th>Started by</th><th>Run</th></tr></thead>
         <tbody>{runs.map(run => <tr key={run.id}>
           <td><button className="quiet" onClick={() => showRun(run.id)}>{run.node}</button></td>
-          <td><span className={'state ' + run.state}>{run.state}</span></td><td>{new Date(run.created || run.started).toLocaleString()}</td><td>{run.trigger || '—'}</td>
+          <td><span className={'state ' + run.state}>{run.state}</span></td><td>{new Date(run.created || run.started).toLocaleString()}</td><td>{run.source ? <button className="quiet" onClick={() => showRun(run.source.run)}>{run.source.run} / {run.source.step}</button> : run.trigger || '—'}</td>
           <td><button className="quiet" onClick={() => showRun(run.id)}>{run.id}</button></td>
         </tr>)}</tbody>
       </table>}
@@ -131,6 +149,14 @@ export function App() {
         </tr>)}</tbody>
       </table>}
     </section>}
+    {preview && <div className="modal-backdrop">
+      <section className="box-editor" role="dialog" aria-label="Run from here preview">
+        <div className="toolbar"><strong>Run from here</strong><button disabled={busy} onClick={() => from(preview.source.step, true)}>Start run</button><button disabled={busy} onClick={() => setPreview(null)}>Back</button></div>
+        <Source source={preview.source} showRun={showRun} fail={setError} />
+        {error && <p className="notice problem">{error}</p>}
+        <Canvas workflow={preview.workflow} catalog={catalog} record={preview} />
+      </section>
+    </div>}
     {enterInputs && <div className="modal-backdrop">
       <form className="run-inputs" onSubmit={event => { event.preventDefault(); run(); }}>
         <h2>Run inputs</h2>{Object.entries(workflow.inputs || {}).map(([name, port]) => <label className="port" key={name}>

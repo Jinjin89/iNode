@@ -2,7 +2,7 @@
 
 How the model in `design.md` is built. This document follows the model and never the other way round: it may only use concepts defined there (node, run, trigger, plugin). If something here would require the user to learn a new idea, either `design.md` is changed on purpose or this document is simplified.
 
-**Built so far:** the core (catalog, checker, runner, run records), boxes with the control nodes `map`, `choose`, `repeat`, `retry` and `try`, a few built-in nodes, nodes that are programs, plugins installed from a folder or a git repository, secrets, the long-running backend with its interface, the command line as a client of it, triggers with the built-in kinds `schedule.every`, `schedule.daily` and `folder.new_file`, and the frontend's Canvas, Runs, When, Plugins and Secrets screens. Not built yet: run from here, "move into box", the web-request trigger kind, trigger kinds from plugins, long-lived plugin processes, `agent`, plugin search.
+**Built so far:** the core (catalog, checker, runner, run records), boxes with the control nodes `map`, `choose`, `repeat`, `retry` and `try`, a few built-in nodes, nodes that are programs, plugins installed from a folder or a git repository, secrets, the long-running backend with its interface, the command line as a client of it, triggers with the built-in kinds `schedule.every`, `schedule.daily` and `folder.new_file`, run from here, and the frontend's Canvas, Runs, When, Plugins and Secrets screens. Not built yet: "move into box", the web-request trigger kind, trigger kinds from plugins, long-lived plugin processes, `agent`, plugin search.
 
 ## Shape
 
@@ -35,12 +35,12 @@ Six parts, each with one job.
 Rules that hold the parts together:
 
 - **One checker.** It is the single implementation of workflow-structure checking, type compatibility, declared input constraints, cycles through saved workflows and boxes, and the "no outside effect" inference. The frontend asks it instead of deciding itself: after each edit it sends the workflow as it stands, saved or not, and draws the answer, which lists the problems, the references found (the lines on the canvas) and each step's inputs and outputs with their types filled in. Plugins remain responsible for validation specific to their operations at run time.
-- **One entry to the runner: start a run of a node.** A press of Run, a command, a trigger event, a plugin's call and "try this node alone" all arrive the same way. Run from here is the same entry, given an inline workflow made of the selected steps with the copied values as its inputs.
+- **One entry to the runner: start a run of a node.** A press of Run, a command, a trigger event, a plugin's call and "try this node alone" all arrive the same way. Run from here is the same entry, given an inline workflow made of the selected steps with the copied values as its inputs; the new run's record links to the run and step it came from.
 - **The runner executes a checked snapshot.** It runs the definitions as they were when checked, and does not look up definitions that may change during the run. The snapshot is kept with the record.
 - **A node is performed by one of two things.** The runner itself performs workflows; a plugin performs everything else. The bundled standard nodes form a plugin that lives inside the backend process and obeys the same descriptions, checks and child-call contract as any other. The runner does not recognise `map` or `choose` by name.
 - **Waiting does not block children.** A run waiting on child runs does not occupy a scheduler execution slot needed by those children.
 - **Values are checked at the edges.** A value arriving through an unchecked connection is checked against what the consumer expects before the consumer starts, and a node's outputs are checked against its description when it returns.
-- **Records form a tree.** Each run records its node, inputs, parent run, and for every step its state (waiting, running, done, failed, copied, interrupted), what it received and what it returned. Data is stored as is, files by reference to unchanged contents, secrets by name, live objects as a placeholder.
+- **Records form a tree.** Each run records its node, inputs, parent run, and for every step its state (waiting, running, done, failed, interrupted), what it received and what it returned. Data is stored as is, files by reference to unchanged contents, secrets by name, live objects as a placeholder.
 - **An accepted event is a run record.** Accepting an event means writing a run record in the waiting state, forced to disk before the source is told it was accepted. There is no separate queue to hand over from: a trigger's queue is its records that are waiting and have never started. Leaving the queue is the same record being marked started, also forced to disk, so after a crash a record is either still queued or started and therefore interrupted, never both and never neither. Ordinary progress of a run is written without that cost.
 
 ### One run, end to end
@@ -63,7 +63,7 @@ The frontend draws what the backend says and sends back what the user did.
 Five screens:
 
 - **Canvas.** Node list on the side; steps with their inputs and outputs; lines for references and a different line for `after`. A `node` input is a box that holds a saved node or steps built inside it; a box with steps opens into the same canvas, full size, with a way back. A value entering a box from outside is drawn crossing the box edge once. "Move into box" is offered for a step when the checker confirms that everything using it (references, captured references, `after`, workflow outputs) stays valid. Unchecked connections are marked. Clicking a step shows its fields, and after a run what it received and returned. A step that called other nodes opens into its child runs.
-- **Runs.** Every run, newest first, with what started it. Opening one shows the canvas as it was, with results. Run again and Run from here are offered here. Run again starts a fresh run with the same inputs: of the node as it is now, or, when the run was of a workflow with unsaved changes, of that run's own snapshot. Run from here shows the selected part and the copied values before starting.
+- **Runs.** Every run, newest first, with what started it. Opening one shows the canvas as it was, with results. Run again and Run from here are offered here. Run again starts a fresh run with the same inputs: of the node as it is now, or, when the run was of a workflow with unsaved changes, of that run's own snapshot. Run from here shows the selected part and the copied values, each with its source, before starting.
 - **When.** Triggers, each with an on/off switch, its current run, the number of waiting events, its last run and its last failure.
 - **Plugins.** Search, install, remove; what a project is missing, with what each plugin says it accesses.
 - **Secrets.** Add, replace and remove by name. Values are never shown again.
@@ -79,6 +79,7 @@ A thin client of the same interface.
 | `inode run <node> key=value` | starts a run and prints its outputs |
 | `inode nodes`, `inode show <node>` | lists and describes nodes |
 | `inode runs`, `inode runs show/follow/stop/again <id>` | lists, shows, follows, stops and repeats runs |
+| `inode runs from <id> <step> [--start]` | previews a run from that step of a past run; `--start` starts it |
 | `inode trigger add <kind> key=value run=<node> key=value` | adds a trigger, which starts off and is given a name such as `schedule.daily-1` |
 | `inode trigger list/on/off/clear/remove` | lists triggers and what each does, switches one on or off, clears its waiting events, removes it |
 | `inode secret set <name>`, `inode secret list/remove` | stores a secret, asking for the value without showing it or reading it from standard input, never from the command line; lists names; removes one |

@@ -21,6 +21,7 @@ type Record struct {
 	Unsaved  bool               `json:"unsaved,omitempty"`
 	State    string             `json:"state"`
 	Trigger  string             `json:"trigger,omitempty"`
+	Source   *RunSource         `json:"source,omitempty"`
 	Created  time.Time          `json:"created,omitzero"`
 	Started  time.Time          `json:"started,omitzero"`
 	Finished time.Time          `json:"finished,omitzero"`
@@ -129,6 +130,7 @@ func (p *Project) begin(queued *Record) (*execution, error) {
 	record := newRecord(step.plan)
 	record.ID, record.Node, record.Unsaved = queued.ID, queued.Node, queued.Unsaved
 	record.Created, record.Trigger = queued.Created, queued.Trigger
+	record.Source = queued.Source
 	e := &execution{project: p, root: record, step: *step}
 	err = e.update(record, nil, false, func() { record.Inputs = step.In })
 	return e, err

@@ -14,14 +14,17 @@ type operation struct {
 }
 
 var Operations = map[string]operation{
-	"nodes":          {call: (*Project).Nodes},
-	"show":           {call: (*Project).Describe},
-	"check":          {call: (*Project).Check},
-	"save":           {call: (*Project).Save, write: true},
-	"run":            {call: (*backend).startRun},
+	"nodes": {call: (*Project).Nodes},
+	"show":  {call: (*Project).Describe},
+	"check": {call: (*Project).Check},
+	"save":  {call: (*Project).Save, write: true},
+	"run": {call: func(b *backend, p *Project, use Definition, inputs Values, name string) (string, error) {
+		return b.startRun(p, newRun(use, inputs, name))
+	}},
 	"runs":           {call: (*Project).Runs},
 	"runs show":      {call: (*Project).ShowRun},
 	"runs again":     {call: (*backend).again},
+	"runs from":      {call: (*backend).from},
 	"runs stop":      {call: (*backend).stopRun},
 	"runs follow":    {call: (*backend).followRun},
 	"add":            {call: (*Project).Add, write: true},

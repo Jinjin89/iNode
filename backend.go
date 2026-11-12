@@ -182,10 +182,10 @@ func interrupt(r *Record) {
 	}
 }
 
-func (b *backend) startRun(p *Project, use Definition, inputs Values, name string) (string, error) {
+func (b *backend) startRun(p *Project, queued *Record) (string, error) {
 	b.triggers.mu.Lock()
 	defer b.triggers.mu.Unlock()
-	e, err := p.begin(newRun(use, inputs, name))
+	e, err := p.begin(queued)
 	if err != nil {
 		return "", err
 	}
@@ -227,7 +227,23 @@ func (b *backend) again(p *Project, id string) (string, error) {
 	if record.Unsaved {
 		use = Definition{Workflow: record.Workflow}
 	}
-	return b.startRun(p, use, record.Inputs, record.Node)
+	queued := newRun(use, record.Inputs, record.Node)
+	queued.Source = record.Source
+	return b.startRun(p, queued)
+}
+
+func (b *backend) from(p *Project, id, step string, start bool) (any, error) {
+	past, err := p.ShowRun(id)
+	if err != nil {
+		return nil, err
+	}
+	preview, err := p.From(past, step)
+	if err != nil || !start {
+		return preview, err
+	}
+	queued := newRun(Definition{Workflow: preview.Workflow}, preview.Inputs, past.Node+" from "+step)
+	queued.Source = &preview.Source
+	return b.startRun(p, queued)
 }
 
 func (b *backend) stopRun(p *Project, id string) error {

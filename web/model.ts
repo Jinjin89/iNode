@@ -4,7 +4,8 @@ export type Definition = string | Workflow;
 export type Step = { use: Definition; in?: Values; after?: string[] };
 export type Workflow = { doc?: string; inputs?: Record<string, Port>; steps?: Record<string, Step>; outputs?: Values; view?: Values };
 export type Description = { name?: string; doc?: string; trigger?: boolean; inputs?: Record<string, Port>; outputs?: Record<string, Port>; workflow?: Workflow; version?: string };
-export type Run = { id?: string; node: string; unsaved?: boolean; trigger?: string; created?: string; state: string; inputs: Values; outputs: Values; steps?: Record<string, Run>; workflow?: Workflow; error?: string };
+export type Source = { run: string; step: string; inputs: Record<string, string[]> };
+export type Run = { id?: string; node: string; unsaved?: boolean; trigger?: string; source?: Source; created?: string; state: string; inputs: Values; outputs: Values; steps?: Record<string, Run>; workflow?: Workflow; error?: string };
 export type Problem = { step: string; input: string; message: string };
 export type Reference = { step: string; input: string; from: string[]; path: Path; bad?: boolean; unchecked?: boolean };
 export type Report = { problems: Problem[]; unchecked: Problem[]; references: Reference[]; nodes: Record<string, Description> };
@@ -92,7 +93,8 @@ export function problems(report: Report, where: string, input?: string): Problem
       || problem.step === where + '/' + input || problem.step.startsWith(where + '/' + input + '/'));
 }
 
-export function graph(workflow: Workflow, catalog: Description[], records: Record<string, Run> = {}, report: Report = emptyReport, scope = '(inline)') {
+export function graph(workflow: Workflow, catalog: Description[], record?: Run, report: Report = emptyReport, scope = '(inline)') {
+  const records = record?.workflow ? record.steps || {} : record ? { node: record } : {};
   const edges: { id: string; source: string; target: string; sourceHandle: string; targetHandle: string; className: string }[] = [];
   for (const ref of report.references) {
     const target = ref.path[0] === 'outputs' ? ['outputs'] : ['steps', ref.path[1]];
@@ -110,7 +112,7 @@ export function graph(workflow: Workflow, catalog: Description[], records: Recor
     }));
   }
   const nodes = [
-    { id: handle(['inputs']), type: 'step', position: { x: 0, y: 0 }, data: { kind: 'inputs', ports: workflow.inputs || {} } },
+    { id: handle(['inputs']), type: 'step', position: { x: 0, y: 0 }, data: { kind: 'inputs', ports: workflow.inputs || {}, record } },
     ...Object.entries(workflow.steps || {}).map(([name, step]) => {
       const info = report.nodes[JSON.stringify(['steps', name])] || describe(records[name]?.workflow || step.use, catalog);
       const returned = records[name]?.outputs;

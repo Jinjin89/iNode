@@ -289,6 +289,43 @@ finally:
 	}
 }
 
+func TestRunFromCommand(t *testing.T) {
+	cliProject(t)
+	flow := "steps: {a: {use: text.upper, in: {text: hi}}, b: {use: text.upper, in: {text: =a.text}}}\noutputs: {text: =b.text}"
+	if err := os.WriteFile("tiny.flow", []byte(flow), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var out, diagnostic bytes.Buffer
+	if err := invokeCLI(t.Context(), []string{"run", "tiny"}, &out, &diagnostic); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := invokeCLI(t.Context(), []string{"runs"}, &out, &diagnostic); err != nil {
+		t.Fatal(err)
+	}
+	id := strings.Fields(out.String())[0]
+	for _, start := range []bool{false, true} {
+		args := []string{"runs", "from", id, "b"}
+		if start {
+			args = append(args, "--start")
+		}
+		out.Reset()
+		diagnostic.Reset()
+		if err := invokeCLI(t.Context(), args, &out, &diagnostic); err != nil {
+			t.Fatal(err)
+		}
+		if !start && (!strings.Contains(out.String(), `"source"`) || !strings.Contains(out.String(), `"HI"`) || !strings.Contains(diagnostic.String(), "ago") || !strings.Contains(diagnostic.String(), "--start")) {
+			t.Fatalf("preview/provenance/confirmation missing: %s, %s", &out, &diagnostic)
+		}
+		if start {
+			var next string
+			if err := json.Unmarshal(out.Bytes(), &next); err != nil || next == "" || next == id {
+				t.Fatalf("start: %s, %v", &out, err)
+			}
+		}
+	}
+}
+
 func TestBackendLifecycleCommands(t *testing.T) {
 	cliProject(t)
 	for _, args := range [][]string{nil, {"help"}, {"version"}, {"unknown"}, {"nodes", "extra"}, {"stop"}} {

@@ -77,7 +77,7 @@ A step can also list other steps in `after`. It then waits for them to succeed w
 
 **Run again** always starts a fresh run. Nothing is reused or recovered automatically. If the backend stops during a run, the run is marked interrupted with outcome unknown and is never replayed by itself.
 
-**Run from here** is the one explicit way to reuse past results, for changing a late step without redoing expensive earlier ones. On a step of a past run, it starts a fresh run of that step and everything downstream of it; other branches do not run. The values this part needs from upstream are copied from the run on screen, labelled with their source and age, and shown before it starts. It is refused, with the reason, when a needed value did not come from a completed step, contains a handle, or is a file that is no longer kept; when an `after` crosses into the selected part; or when the workflow, its filled-in inputs or its node versions have changed upstream of the step. It works within one workflow, not inside one past iteration of a `map`.
+**Run from here** is the one explicit way to reuse past results, for changing a late step without redoing expensive earlier ones. On a step of a finished past run, it starts a fresh run of that step and everything downstream of it, using the workflow as it is saved now; nothing else runs. Every value this part or the workflow's outputs need from elsewhere is copied from the run on screen, labelled with its source and age, and shown before it starts. It is refused, with the reason, when a needed value did not come from a completed step, when an `after` crosses into the selected part, or when a step that supplied a value would be given a different node, different filled-in inputs or a different saved workflow today. A change to the code of a node upstream is not detected. It works within one workflow, not inside one past iteration of a `map`.
 
 ## Trigger
 
@@ -221,6 +221,7 @@ These are deliberate. Each keeps the model small.
 | Cleanup guaranteed after failure | `try(do, on_error)` covers the common case; there is no "finally". |
 | Using one plugin's live objects in another plugin | Exchange files. |
 | Transforming secrets inside a workflow | A node that needs a secret takes a `secret` input and uses it internally. |
+| Noticing changed node code in Run from here | Records keep what each step was given and returned, not the program behind it. The preview shows where each reused value came from and how old it is. |
 | Seeing every file in a watched folder | The folder kind looks about once a second. Files already there when it is switched on are not events, a file removed before it is seen is missed, and a file can be reported before another program has finished writing it. |
 | Coordinating state shared between workflows | Only runs of one trigger are kept from overlapping. Plugins that keep state guard it themselves. |
 | Formulas inside references | References select data by path only; computation is a node. |

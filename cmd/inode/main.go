@@ -14,13 +14,14 @@ import (
 	"slices"
 	"strings"
 	"syscall"
+	"time"
 
 	"go.yaml.in/yaml/v3"
 	"golang.org/x/term"
 	"inode"
 )
 
-const usage = "usage: inode run <node> key=value ... | nodes | show <node> | check <workflow or JSON> | save <workflow> <version> <JSON> | runs [show|stop|follow|again <id>] | trigger add <kind> key=value ... run=<node> key=value ... | trigger list/on/off/remove/clear [name] | secret set <name> (prompt or stdin; one trailing line ending removed) | secret list | secret remove <name> | add <path or git URL> | remove <plugin> | plugins | start | stop | help | version"
+const usage = "usage: inode run <node> key=value ... | nodes | show <node> | check <workflow or JSON> | save <workflow> <version> <JSON> | runs [show|stop|follow|again <id>] | runs from <id> <step> [--start] | trigger add <kind> key=value ... run=<node> key=value ... | trigger list/on/off/remove/clear [name] | secret set <name> (prompt or stdin; one trailing line ending removed) | secret list | secret remove <name> | add <path or git URL> | remove <plugin> | plugins | start | stop | help | version"
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -61,7 +62,24 @@ func command(ctx context.Context, args []string, out, diagnostic io.Writer) erro
 		exists = true
 	}
 	commands := map[string]func(context.Context, *inode.Client, []string, io.Writer, io.Writer) error{"run": run, "trigger add": addTrigger}
-	if !exists || commands[operation] != nil && len(rest) < 1 || commands[operation] == nil && len(rest) != n {
+	arguments := make([]any, len(rest))
+	for i, value := range rest {
+		arguments[i] = value
+		if commands[operation] == nil && (strings.HasPrefix(value, "{") || strings.HasPrefix(value, "[")) {
+			if err := json.Unmarshal([]byte(value), &arguments[i]); err != nil {
+				return err
+			}
+		}
+	}
+	startFrom := false
+	if operation == "runs from" {
+		startFrom = len(rest) == 3 && rest[2] == "--start"
+		if startFrom {
+			arguments = arguments[:2]
+		}
+		arguments = append(arguments, startFrom)
+	}
+	if !exists || commands[operation] != nil && len(rest) < 1 || commands[operation] == nil && len(arguments) != n {
 		return fmt.Errorf("%s", usage)
 	}
 	client, started, err := inode.Connect(ctx, ".", operation != "stop")
@@ -97,15 +115,6 @@ func command(ctx context.Context, args []string, out, diagnostic io.Writer) erro
 	if command := commands[operation]; command != nil {
 		return command(ctx, client, rest, out, diagnostic)
 	}
-	arguments := make([]any, len(rest))
-	for i, value := range rest {
-		arguments[i] = value
-		if strings.HasPrefix(value, "{") || strings.HasPrefix(value, "[") {
-			if err := json.Unmarshal([]byte(value), &arguments[i]); err != nil {
-				return err
-			}
-		}
-	}
 	if operation == "secret set" {
 		var value []byte
 		fd := int(os.Stdin.Fd())
@@ -128,7 +137,7 @@ func command(ctx context.Context, args []string, out, diagnostic io.Writer) erro
 	err = client.Call(ctx, operation, arguments, func(data json.RawMessage) error {
 		columns := map[string][]func(any) any{
 			"nodes":        {field("name"), field("doc")},
-			"runs":         {field("id"), field("node"), field("state"), field("trigger")},
+			"runs":         {field("id"), field("node"), field("state"), startedBy},
 			"plugins":      {field("name"), field("version"), field("state"), field("source")},
 			"trigger list": {field("name"), triggerInstruction, field("state"), runField("current"), field("waiting"), runField("last"), runField("last_failure"), field("error")},
 			"secret list":  {func(row any) any { return row }},
@@ -168,6 +177,18 @@ func command(ctx context.Context, args []string, out, diagnostic io.Writer) erro
 			_, err := fmt.Fprint(out, message)
 			return err
 		}
+		if operation == "runs from" && !startFrom {
+			var preview inode.RunFrom
+			if err := json.Unmarshal(data, &preview); err != nil {
+				return err
+			}
+			var source inode.Record
+			if err := client.Call(ctx, "runs show", []any{preview.Source.Run}, func(data json.RawMessage) error { return json.Unmarshal(data, &source) }); err != nil {
+				return err
+			}
+			fmt.Fprintf(diagnostic, "Source run %s, step %s, finished %s (%s ago)\n", preview.Source.Run, preview.Source.Step, source.Finished.Format(time.RFC3339), time.Since(source.Finished).Round(time.Second))
+			fmt.Fprintf(diagnostic, "Start with: inode runs from %s %s --start\n", preview.Source.Run, preview.Source.Step)
+		}
 		encoder := json.NewEncoder(out)
 		if operation != "runs follow" {
 			encoder.SetIndent("", "  ")
@@ -182,6 +203,13 @@ func command(ctx context.Context, args []string, out, diagnostic io.Writer) erro
 
 func field(name string) func(any) any {
 	return func(row any) any { return row.(inode.Values)[name] }
+}
+
+func startedBy(row any) any {
+	if source, ok := field("source")(row).(map[string]any); ok {
+		return fmt.Sprintf("%s / %s", source["run"], source["step"])
+	}
+	return field("trigger")(row)
 }
 
 func runField(name string) func(any) any {

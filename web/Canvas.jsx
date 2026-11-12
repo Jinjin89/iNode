@@ -118,7 +118,7 @@ function Step({ id, data }) {
     issues={problems(report, where, path.slice(kind === 'step' ? 3 : 0).join('.'))} />;
   const issues = kind === 'step' ? problems(report, where) : Object.keys(ports).flatMap(key => problems(report, scope, kind === 'inputs' ? key : 'outputs.' + key));
   return <article className={'step ' + (record?.state || '') + (issues.length ? ' has-problem' : '')}>
-    <header><strong>{kind === 'step' ? name : kind === 'inputs' ? 'Inputs' : 'Outputs'}</strong>{record && <span className="state">{record.state}</span>}</header>
+    <header><strong>{kind === 'step' ? name : kind === 'inputs' ? 'Inputs' : 'Outputs'}</strong>{record?.state && <span className="state">{record.state}</span>}</header>
     {kind === 'step' ? <>
       <div className="node-name">{typeof step.use === 'string' ? step.use : 'Inline workflow'}<span className="after-source" title="Connect to after">{source([name])}</span>
         <span className="after-target" title="Run after another step"><Handle type="target" position={Position.Left} id={handle(['steps', name, 'after'])} /></span></div>
@@ -137,6 +137,7 @@ function Step({ id, data }) {
     </> : Object.entries(ports).map(([key, port]) => <div className={'port ' + (kind === 'inputs' ? 'output' : '')} key={key}>
       <span>{key}<small>{kind === 'inputs' ? type(port) : ''}</small></span>
       {kind === 'inputs' ? source(['inputs', key]) : field('any', port, ['outputs', key])}
+      {kind === 'inputs' && record && <><small>{record.source?.inputs[key]?.join('.')}</small><pre>{JSON.stringify(record.inputs?.[key], null, 2)}</pre></>}
       <Messages items={problems(report, scope, kind === 'inputs' ? key : 'outputs.' + key)} />
     </div>)}
   </article>;
@@ -175,7 +176,7 @@ function Named({ name, onChange, names = [], label = 'Name' }) {
     onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); }} />;
 }
 
-export function Canvas({ workflow, catalog, onEdit, record, scope = '(inline)', nested = false }) {
+export function Canvas({ workflow, catalog, onEdit, record, onFrom, scope = '(inline)', nested = false }) {
   const [selected, select] = useState('');
   const [checked, setChecked] = useState({ document: null, report: emptyReport });
   const [error, setError] = useState('');
@@ -187,7 +188,7 @@ export function Canvas({ workflow, catalog, onEdit, record, scope = '(inline)', 
   const fresh = checked.document === key;
   const id = useId();
   const records = record?.workflow ? record.steps || {} : record ? { node: record } : {};
-  const derived = graph(workflow, catalog, records, report, scope);
+  const derived = graph(workflow, catalog, record, report, scope);
   const nodes = derived.nodes.map(node => ({ ...node, selected: node.id === selected, data: { ...node.data, workflow, catalog, edit: onEdit, report, scope } }));
   const selection = selected ? parseHandle(selected) : [];
   const name = selection[0] === 'steps' && selection.length === 2 ? selection[1] : '';
@@ -216,6 +217,7 @@ export function Canvas({ workflow, catalog, onEdit, record, scope = '(inline)', 
         <button className="quiet close" onClick={() => select('')}>Close</button>
         {step && <>
           <h3>Step {name}</h3>
+          {onFrom && <button onClick={() => onFrom(name)}>Run from here</button>}
           {onEdit && <div className="row">
             <Named label="Step name" name={name} names={Object.keys(workflow.steps)} onChange={fresh && (next => {
               if (next !== name) { onEdit(rename(workflow, 'steps', name, next, report)); select(handle(['steps', next])); }

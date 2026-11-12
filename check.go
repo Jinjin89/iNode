@@ -258,10 +258,16 @@ func (c *checker) workflow(p *plan, location string) {
 				}
 			}
 		}
+		before := len(c.report.References)
 		bound, refs := c.compile(&step, where, tree, valuePath{"steps", id})
 		c.report.Problems = append(c.report.Problems, missing(bound.Open, where, "")...)
 		for dependency := range c.references(where, refs) {
 			p.deps[id][dependency] = true
+		}
+		for _, ref := range c.report.References[before:] {
+			if ref.Path[0] == "steps" && ref.Path[1] == id && ref.From[0] != "inputs" {
+				p.deps[id][ref.From[0]] = true
+			}
 		}
 		flow.Steps[id], states[id] = step, 2
 		if step.plan != nil {
@@ -315,22 +321,11 @@ func (c *checker) expression(value any, want Type, location string, path valuePa
 			}
 		}
 		if want.Name == "node" {
-			switch v := value.(type) {
-			case string:
-				if !strings.HasPrefix(v, "=") {
-					value = &Step{Use: Definition{Name: v}}
-				}
-			case map[string]any:
-				data, err := json.Marshal(v)
-				if err != nil {
-					c.error(location, path.String(), err)
-					return anyType, nil
-				}
-				step := &Step{}
-				if err := decode(data, step); err != nil {
-					c.error(location, path.String(), err)
-				}
-				value = step
+			var err error
+			value, err = nodeValue(value)
+			if err != nil {
+				c.error(location, path.String(), err)
+				return anyType, nil
 			}
 		}
 		if node, ok := value.(*Step); ok {

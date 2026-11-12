@@ -80,6 +80,23 @@ type Step struct {
 	contract *Type
 }
 
+func nodeValue(value any) (any, error) {
+	switch v := value.(type) {
+	case string:
+		if !strings.HasPrefix(v, "=") {
+			return &Step{Use: Definition{Name: v}}, nil
+		}
+	case map[string]any:
+		data, err := json.Marshal(v)
+		if err != nil {
+			return nil, err
+		}
+		step := &Step{}
+		return step, decode(data, step)
+	}
+	return value, nil
+}
+
 type Definition struct {
 	Name     string
 	Workflow *Workflow

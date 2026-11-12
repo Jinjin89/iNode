@@ -80,36 +80,37 @@ describe('document edits', () => {
 describe('document to graph', () => {
   it('uses only reported references and draws after as a different line', () => {
     const flow = set(tiny, ['steps', 'b', 'in', 'data'], { word: '=a.text' });
-    const result = graph(flow, catalog, {}, report);
+    const result = graph(flow, catalog, undefined, report);
     expect(result.nodes.map(node => parseHandle(node.id))).toEqual([['inputs'], ['steps', 'a'], ['steps', 'b'], ['outputs']]);
     expect(result.edges.map(edge => edge.className)).toEqual(['', '', '', 'after']);
     expect(result.edges).toHaveLength(4); // An unreported string is never guessed to be a reference.
     const nested = { ...refs[1], path: ['steps', 'b', 'in', 'data', 'word'] };
-    expect(parseHandle(graph(flow, catalog, {}, { ...report, references: [nested] }).edges[0].targetHandle)).toEqual(nested.path);
+    expect(parseHandle(graph(flow, catalog, undefined, { ...report, references: [nested] }).edges[0].targetHandle)).toEqual(nested.path);
   });
   it('marks bad and unchecked lines from the entries themselves', () => {
-    expect(graph(tiny, catalog, {}, { ...report, references: [{ ...refs[1], bad: true }] }).edges[0].className).toBe('bad');
-    expect(graph(tiny, catalog, {}, { ...report, references: [{ ...refs[1], unchecked: true }] }).edges[0].className).toBe('unchecked');
+    expect(graph(tiny, catalog, undefined, { ...report, references: [{ ...refs[1], bad: true }] }).edges[0].className).toBe('bad');
+    expect(graph(tiny, catalog, undefined, { ...report, references: [{ ...refs[1], unchecked: true }] }).edges[0].className).toBe('unchecked');
   });
   it('shows bound ports supplied by the checker', () => {
     const flow: Workflow = { steps: { m: { use: 'map' } } };
     const nodes = { [JSON.stringify(['steps', 'm'])]: { inputs: { over: 'list of text', do: 'node(text) gives text' }, outputs: { result: 'list of text' } } };
-    const m = graph(flow, catalog, {}, { ...emptyReport, nodes }).nodes[1];
+    const m = graph(flow, catalog, undefined, { ...emptyReport, nodes }).nodes[1];
     expect('outputs' in m.data && m.data.outputs?.result).toBe('list of text');
     expect('inputs' in m.data && m.data.inputs?.do).toBe('node(text) gives text');
   });
   it('uses recorded ports and positions without changing the snapshot', () => {
     const flow = set(tiny, ['view', 'positions', handle(['steps', 'a'])], { x: 7, y: 9 });
-    const result = graph(flow, [], { a: { node: 'text.upper', state: 'done', inputs: { text: 'hi' }, outputs: { text: 'HI' } } }, report);
+    const result = graph(flow, [], { node: 'tiny', state: 'done', inputs: { text: 'hi' }, outputs: {}, workflow: flow, steps: { a: { node: 'text.upper', state: 'done', inputs: { text: 'hi' }, outputs: { text: 'HI' } } } }, report);
     const a = result.nodes.find(node => node.id === handle(['steps', 'a']))!;
     expect(a.position).toEqual({ x: 7, y: 9 });
     expect('record' in a.data && a.data.record?.outputs.text).toBe('HI');
+    expect('record' in result.nodes[0].data && result.nodes[0].data.record?.inputs.text).toBe('hi');
     expect('outputs' in a.data && a.data.outputs).toEqual({ text: 'any' });
     expect(flow).toEqual(set(tiny, ['view', 'positions', handle(['steps', 'a'])], { x: 7, y: 9 }));
     expect(runWorkflow({ node: 'text.upper', state: 'done', inputs: { text: 'hi' }, outputs: { text: 'HI' } }).steps?.node.in).toEqual({ text: 'hi' });
   });
   it('keeps a box type when showing a run', () => {
-    const m = graph({ steps: { m: { use: 'map' } } }, catalog, { m: { node: 'map', state: 'done', inputs: { do: { use: 'text.upper' }, over: ['hi'] }, outputs: { result: ['HI'] } } }).nodes[1];
+    const m = graph({ steps: { m: { use: 'map' } } }, catalog, { node: 'tiny', state: 'done', inputs: {}, outputs: {}, workflow: { steps: { m: { use: 'map' } } }, steps: { m: { node: 'map', state: 'done', inputs: { do: { use: 'text.upper' }, over: ['hi'] }, outputs: { result: ['HI'] } } } }).nodes[1];
     expect('inputs' in m.data && m.data.inputs?.do).toBe('node(T) gives U');
   });
   it('handles escaped text, identifiers and both port forms', () => {
