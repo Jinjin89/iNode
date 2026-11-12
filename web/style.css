@@ -105,7 +105,7 @@ nav { display: flex; gap: 8px; }
 .state.done { color: #327354; background: #e5f3eb; }
 .state.failed, .state.interrupted { color: #b63d35; background: #ffebe7; }
 .state.running { color: #946617; background: #fff2d6; }
-.runs, .plugins, .when { padding: 32px; max-width: 1400px; margin: auto; }
+.runs, .plugins, .when, .secrets { padding: 32px; max-width: 1400px; margin: auto; }
 .plugins .row, .manifest { margin-bottom: 20px; }
 .manifest { padding: 16px; background: white; border: 1px solid #dfe3e8; }
 .trigger-form { margin-top: 28px; padding: 22px; background: white; border: 1px solid #dfe3e8; }

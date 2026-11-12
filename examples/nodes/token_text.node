@@ -1,0 +1,5 @@
+doc: Return text and the token's length without returning the token.
+inputs: {token: secret, text: text}
+outputs: {result: "object{text: text, length: number}"}
+no_outside_effect: true
+run: python3 token_text.py

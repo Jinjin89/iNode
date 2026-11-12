@@ -151,6 +151,7 @@ func (e *execution) execute(ctx context.Context, node Step, record *Record, loca
 	plan, inputs := node.plan, node.In
 	err := e.start(node, record)
 	var outputs Values
+	scrub := func(value any) any { return value }
 	if err == nil {
 		err = ctx.Err()
 	}
@@ -158,14 +159,18 @@ func (e *execution) execute(ctx context.Context, node Step, record *Record, loca
 		if plan.Workflow != nil {
 			outputs, err = e.workflow(ctx, plan, record, inputs, location)
 		} else {
-			outputs, err = plan.run(ctx, inputs, func(ctx context.Context, node *Step, value any) (any, error) {
-				return e.call(ctx, record, node, location, value)
-			})
+			var supplied Values
+			supplied, scrub, err = e.project.secretInputs(inputs, e.project.nodes[plan.Name].Inputs)
+			if err == nil {
+				outputs, err = plan.run(ctx, supplied, func(ctx context.Context, node *Step, value any) (any, error) {
+					return e.call(ctx, record, node, location, value)
+				})
+			}
 		}
 	}
 	if outputs != nil {
 		data, dataErr := normalise(outputs)
-		outputs, _ = data.(Values)
+		outputs, _ = scrub(data).(Values)
 		if dataErr != nil {
 			err = fmt.Errorf("node %q must return JSON-compatible outputs: %w", plan.Name, dataErr)
 		}
@@ -184,6 +189,11 @@ func (e *execution) execute(ctx context.Context, node Step, record *Record, loca
 			if len(bound.Problems) > 0 {
 				err = bound.Problems
 			}
+		}
+	}
+	if err != nil {
+		if message := scrub(err.Error()).(string); message != err.Error() {
+			err = errors.New(message)
 		}
 	}
 	if ctx.Err() != nil {

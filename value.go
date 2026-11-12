@@ -237,7 +237,7 @@ func match(value any, want Type, types map[string]Type) (bool, error) {
 		}
 		return unchecked, nil
 	default:
-		if got.Name == want.Name {
+		if got.Name == want.Name || want.Name == "secret" && got.Name == "text" {
 			return false, nil
 		}
 	}

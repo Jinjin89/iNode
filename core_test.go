@@ -43,7 +43,7 @@ func TestChecker(t *testing.T) {
 		{"primitive path", `steps: {a: {use: text.upper, in: {text: hi}}, bad: {use: text.upper, in: {text: =a.text.name}}}`, "x/bad", "text", `no field "name"`},
 		{"list element", `steps: {bad: {use: text.join, in: {parts: [hi, 2]}}}`, "x/bad", "parts", "item 1"},
 		{"typed list", "inputs: {parts: list of number}\nsteps: {bad: {use: text.join, in: {parts: =inputs.parts}}}", "x/bad", "parts", "needs text"},
-		{"unsupported type", `inputs: {x: secret}`, "x", "x", "unsupported type"},
+		{"unsupported type", `inputs: {x: missing}`, "x", "x", "unsupported type"},
 		{"invalid default", `inputs: {x: {type: text, default: 3}}`, "x", "x", "fix the default"},
 		{"missing after", `steps: {bad: {use: data.value, in: {value: 1}, after: [absent]}}`, "x/bad", "after", "unknown step"},
 		{"data cycle", `steps: {a: {use: text.upper, in: {text: =b.text}}, b: {use: text.upper, in: {text: =a.text}}}`, "x/b", "text", "cycle"},

@@ -37,7 +37,7 @@ func (p *typeParser) parse() (Type, error) {
 	p.tokens = p.tokens[1:]
 	t := Type{Name: name}
 	switch name {
-	case "text", "number", "bool", "any":
+	case "text", "number", "bool", "any", "secret":
 	case "list":
 		t.Item = &anyType
 		if p.take("of") {

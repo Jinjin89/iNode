@@ -199,6 +199,96 @@ func TestTriggerCommands(t *testing.T) {
 	}
 }
 
+func TestSecretCommands(t *testing.T) {
+	cliProject(t)
+	var out, diagnostic bytes.Buffer
+	if err := invokeCLI(t.Context(), []string{"secret", "set", "token", "argument-value"}, &out, &diagnostic); err == nil || !strings.Contains(err.Error(), "usage:") {
+		t.Fatalf("secret set must refuse an argument value: %v", err)
+	}
+	if _, err := os.Stat(".inode"); !os.IsNotExist(err) {
+		t.Fatal("invalid command started a backend")
+	}
+	if err := os.Mkdir("nodes", 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("nodes/length.node", []byte("doc: Length\ninputs: {token: secret}\noutputs: {length: number}\nrun: python3 -c 'import json,sys; print(json.dumps({\"length\":len(json.load(sys.stdin)[\"token\"])}))'"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		input string
+		want  int
+	}{{"abc", 3}, {"abc\n", 3}, {"abc\r\n", 3}, {"abc\n\n", 4}, {"abc\r", 4}} {
+		out.Reset()
+		diagnostic.Reset()
+		cmd := exec.Command(cliBinary, "secret", "set", "123")
+		cmd.Env = append(os.Environ(), "GORACE=atexit_sleep_ms=0")
+		cmd.Stdin = strings.NewReader(test.input)
+		cmd.Stdout, cmd.Stderr = &out, &diagnostic
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("set from stdin: %s, %v", &diagnostic, err)
+		}
+		if err := invokeCLI(t.Context(), []string{"run", "length", "token=123"}, &out, &diagnostic); err != nil || !strings.Contains(out.String(), fmt.Sprintf(`"length": %d`, test.want)) || strings.Contains(out.String()+diagnostic.String(), "abc") {
+			t.Fatalf("stdin %q: %s, %v", test.input, &out, err)
+		}
+	}
+	for _, test := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"secret", "list"}, "123\n"},
+		{[]string{"secret", "remove", "123"}, ""},
+		{[]string{"secret", "list"}, ""},
+	} {
+		out.Reset()
+		diagnostic.Reset()
+		if err := invokeCLI(t.Context(), test.args, &out, &diagnostic); err != nil || out.String() != test.want {
+			t.Fatalf("%v: %s, %v", test.args, &out, err)
+		}
+	}
+}
+
+func TestSecretTerminalPrompt(t *testing.T) {
+	cliProject(t)
+	script := `import os, pty, select, subprocess, sys, termios, time
+master, slave = pty.openpty()
+initial = termios.tcgetattr(slave)
+process = subprocess.Popen([sys.argv[1], "secret", "set", "token"], stdin=slave, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+try:
+    diagnostic = b""
+    while not diagnostic.endswith(b"Secret value: "):
+        assert select.select([process.stderr], [], [], 5)[0], "no prompt"
+        data = os.read(process.stderr.fileno(), 4096)
+        assert data, "exited before prompting"
+        diagnostic += data
+    deadline = time.monotonic() + 5
+    while termios.tcgetattr(slave)[3] & termios.ECHO:
+        assert time.monotonic() < deadline, "echo stayed enabled"
+        time.sleep(0.001)
+    os.write(master, b"abc\n")
+    output, error = process.communicate(timeout=5)
+    assert process.returncode == 0, error
+    assert termios.tcgetattr(slave) == initial, "terminal was not restored"
+    echoed = os.read(master, 4096) if select.select([master], [], [], 0)[0] else b""
+    assert b"abc" not in diagnostic + output + error + echoed, "secret was echoed"
+    assert output == b"" and error == b"\n", (output, error)
+finally:
+    if process.poll() is None:
+        process.kill()
+        process.wait()
+    os.close(master)
+    os.close(slave)
+`
+	cmd := exec.CommandContext(t.Context(), "python3", "-c", script, cliBinary)
+	cmd.Env = append(os.Environ(), "GORACE=atexit_sleep_ms=0")
+	if data, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("terminal prompt: %s, %v", data, err)
+	}
+	value, err := os.ReadFile(".inode/secrets/token.secret")
+	if err != nil || string(value) != "abc" {
+		t.Fatalf("terminal input: %q, %v", value, err)
+	}
+}
+
 func TestBackendLifecycleCommands(t *testing.T) {
 	cliProject(t)
 	for _, args := range [][]string{nil, {"help"}, {"version"}, {"unknown"}, {"nodes", "extra"}, {"stop"}} {

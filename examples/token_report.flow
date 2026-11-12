@@ -1,0 +1,5 @@
+doc: Use a stored token without returning it.
+inputs: {text: {type: text, default: hi}}
+steps:
+  report: {use: token_text, in: {token: demo_token, text: =inputs.text}}
+outputs: {result: =report.result}

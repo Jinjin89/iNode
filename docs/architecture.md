@@ -2,7 +2,7 @@
 
 How the model in `design.md` is built. This document follows the model and never the other way round: it may only use concepts defined there (node, run, trigger, plugin). If something here would require the user to learn a new idea, either `design.md` is changed on purpose or this document is simplified.
 
-**Built so far:** the core (catalog, checker, runner, run records), boxes with the control nodes `map`, `choose`, `repeat`, `retry` and `try`, a few built-in nodes, nodes that are programs, plugins installed from a folder or a git repository, the long-running backend with its interface, the command line as a client of it, triggers with the built-in kinds `schedule.every`, `schedule.daily` and `folder.new_file`, and the frontend's Canvas, Runs, When and Plugins screens. Not built yet: run from here, "move into box", the web-request trigger kind, trigger kinds from plugins, secrets and the Secrets screen, long-lived plugin processes, `agent`, plugin search.
+**Built so far:** the core (catalog, checker, runner, run records), boxes with the control nodes `map`, `choose`, `repeat`, `retry` and `try`, a few built-in nodes, nodes that are programs, plugins installed from a folder or a git repository, secrets, the long-running backend with its interface, the command line as a client of it, triggers with the built-in kinds `schedule.every`, `schedule.daily` and `folder.new_file`, and the frontend's Canvas, Runs, When, Plugins and Secrets screens. Not built yet: run from here, "move into box", the web-request trigger kind, trigger kinds from plugins, long-lived plugin processes, `agent`, plugin search.
 
 ## Shape
 
@@ -17,7 +17,7 @@ The interface is grouped by what the user manages:
 | Runs | start, stop, list, show, watch live, run again, run from here |
 | Triggers | add, remove, list, switch on or off, clear waiting events |
 | Plugins | search, list missing, install, remove |
-| Secrets | set, list names |
+| Secrets | set, list names, remove |
 
 ## Backend
 
@@ -66,7 +66,7 @@ Five screens:
 - **Runs.** Every run, newest first, with what started it. Opening one shows the canvas as it was, with results. Run again and Run from here are offered here. Run again starts a fresh run with the same inputs: of the node as it is now, or, when the run was of a workflow with unsaved changes, of that run's own snapshot. Run from here shows the selected part and the copied values before starting.
 - **When.** Triggers, each with an on/off switch, its current run, the number of waiting events, its last run and its last failure.
 - **Plugins.** Search, install, remove; what a project is missing, with what each plugin says it accesses.
-- **Secrets.** Add and replace by name. Values are never shown again.
+- **Secrets.** Add, replace and remove by name. Values are never shown again.
 
 A field is chosen by the input's type: text box, number box, switch, list editor, file picker, secret picker, socket only (for live objects, which cannot be typed in), or box.
 
@@ -81,6 +81,7 @@ A thin client of the same interface.
 | `inode runs`, `inode runs show/follow/stop/again <id>` | lists, shows, follows, stops and repeats runs |
 | `inode trigger add <kind> key=value run=<node> key=value` | adds a trigger, which starts off and is given a name such as `schedule.daily-1` |
 | `inode trigger list/on/off/clear/remove` | lists triggers and what each does, switches one on or off, clears its waiting events, removes it |
+| `inode secret set <name>`, `inode secret list/remove` | stores a secret, asking for the value without showing it or reading it from standard input, never from the command line; lists names; removes one |
 | `inode search`, `inode add <plugin>` | finds and installs plugins |
 | `inode start`, `inode stop` | starts the backend and opens the frontend; stops the backend |
 

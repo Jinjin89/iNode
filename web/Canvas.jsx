@@ -30,13 +30,15 @@ export function NodeList({ catalog, workflow, onEdit }) {
   </aside>;
 }
 
-export function Field({ port = 'any', value, onChange, catalog = [], path = [], socket, descriptions = {}, issues = [] }) {
+export function Field({ port = 'any', value, onChange, catalog = [], path = [], socket, descriptions = {}, issues = [], references = true }) {
   const kind = type(port);
   const fallback = typeof port === 'object' ? port.default : undefined;
   const shownValue = value === undefined ? fallback : value;
   const [draft, setDraft] = useState('');
   const [error, setError] = useState('');
   const [opened, open] = useState(false);
+  const [secrets, setSecrets] = useState([]);
+  useReply(kind === 'secret' && onChange && op['secret list'], [], setSecrets, setError);
   useEffect(() => { setDraft(shownValue === undefined ? '' : JSON.stringify(shownValue, null, 2)); setError(''); }, [shownValue]);
   const commit = () => {
     try { onChange(draft === '' ? undefined : JSON.parse(draft)); setError(''); }
@@ -44,7 +46,7 @@ export function Field({ port = 'any', value, onChange, catalog = [], path = [], 
   };
   const clear = onChange && value !== undefined && <button type="button" className="quiet clear" title="Clear input" onClick={() => onChange(undefined)}>×</button>;
   const handle = socket?.(path, port);
-  if (reference(shownValue) && (onChange || box(port))) return <div className="field linked">{handle}<code>{shownValue}</code>{clear}</div>;
+  if (references && reference(shownValue) && (onChange || box(port))) return <div className="field linked">{handle}<code>{shownValue}</code>{clear}</div>;
   if (box(port)) {
     const step = typeof shownValue === 'string' ? { use: shownValue } : shownValue;
     const inline = step?.use && typeof step.use === 'object';
@@ -52,7 +54,7 @@ export function Field({ port = 'any', value, onChange, catalog = [], path = [], 
     const fields = socket => Object.entries({ ...nodeInputs(step.use, step.in, catalog), ...descriptions[JSON.stringify(path)]?.inputs }).map(([name, port]) => <label className="port" key={name}>
       <span>{name}<small>{type(port)}</small></span>
       <Field port={port} value={step.in?.[name]} onChange={onChange && (next => onChange(set(step, ['in', name], next)))}
-        catalog={catalog} path={[...path, 'in', name]} socket={socket} descriptions={descriptions} />
+        catalog={catalog} path={[...path, 'in', name]} socket={socket} descriptions={descriptions} references={references} />
     </label>);
     return <div className="box nodrag nowheel">{handle}<div className="box-title">Box {clear}</div>
       <select aria-label="Node in box" disabled={!onChange} value={inline ? 'inline' : step?.use ? 'node:' + step.use : ''} onChange={event => onChange({
@@ -78,18 +80,21 @@ export function Field({ port = 'any', value, onChange, catalog = [], path = [], 
   }
   if (!onChange) return <div className="field">{handle}<pre className="value">{shownValue === undefined ? 'Not filled' : JSON.stringify(shownValue, null, 2)}</pre></div>;
   const json = kind !== 'text' && kind !== 'number' && kind !== 'bool';
-  const shown = kind === 'text' && typeof shownValue === 'string' && shownValue.startsWith('==') ? shownValue.slice(1) : shownValue;
+  const shown = references && (kind === 'text' || kind === 'secret') && typeof shownValue === 'string' && shownValue.startsWith('==') ? shownValue.slice(1) : shownValue;
   return <div className={'field nodrag ' + (shownValue === undefined ? 'empty' : '')}>{handle}
-    {json ? <textarea aria-label="JSON value" spellCheck="false" value={draft} onChange={event => setDraft(event.target.value)} onBlur={commit} /> :
+    {kind === 'secret' ? <select aria-label="Secret name" value={shown ?? ''} onChange={event => onChange(references && event.target.value.startsWith('=') ? '=' + event.target.value : event.target.value)}>
+      <option value="" disabled>Choose a secret</option>
+      {[...new Set([...(shown ? [shown] : []), ...secrets])].map(name => <option key={name}>{name}</option>)}
+    </select> : json ? <textarea aria-label="JSON value" spellCheck="false" value={draft} onChange={event => setDraft(event.target.value)} onBlur={commit} /> :
       <input aria-label={kind + ' value'} type={kind === 'bool' ? 'checkbox' : kind === 'number' ? 'number' : 'text'}
         step={kind === 'number' ? 'any' : undefined}
         checked={kind === 'bool' ? shownValue === true : undefined} value={kind === 'bool' ? undefined : shown ?? ''}
         placeholder={typeof port === 'object' && 'default' in port ? String(port.default) : 'Not filled'}
         onChange={event => onChange(kind === 'bool' ? event.target.checked : kind === 'number'
           ? event.target.value === '' ? undefined : event.target.valueAsNumber
-          : event.target.value.startsWith('=') ? '=' + event.target.value : event.target.value)} />}
+          : references && event.target.value.startsWith('=') ? '=' + event.target.value : event.target.value)} />}
     {value === undefined && fallback !== undefined && <small>Default</small>}
-    {shownValue === undefined && <button type="button" className="quiet" onClick={() => onChange(kind === 'text' ? '' : kind === 'number' ? 0 : kind === 'bool' ? false : {})}>Fill</button>}
+    {shownValue === undefined && kind !== 'secret' && <button type="button" className="quiet" onClick={() => onChange(kind === 'text' ? '' : kind === 'number' ? 0 : kind === 'bool' ? false : {})}>Fill</button>}
     {clear}{error && <p className="problem">{error}</p>}
   </div>;
 }

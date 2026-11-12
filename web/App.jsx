@@ -3,6 +3,7 @@ import { Canvas, Field, NodeList, useReply } from './Canvas';
 import { call, op } from './client';
 import { content, runWorkflow, set, type } from './model';
 import { When } from './When';
+import { Secrets } from './Secrets';
 
 export function App() {
   const [catalog, setCatalog] = useState([]);
@@ -64,7 +65,7 @@ export function App() {
   const showRun = id => { setRecord(previous => previous?.id === id ? previous : null); setRunId(id); setScreen('Canvas'); };
   return <main>
     <header className="app-header"><a className="brand" href="#" onClick={event => event.preventDefault()}>iNode<span>Local workflows</span></a>
-      <nav>{['Canvas', 'Runs', 'When', 'Plugins'].map(name => <button key={name} className={screen === name ? 'active' : 'quiet'} onClick={() => {
+      <nav>{['Canvas', 'Runs', 'When', 'Plugins', 'Secrets'].map(name => <button key={name} className={screen === name ? 'active' : 'quiet'} onClick={() => {
         setScreen(name);
         const listing = { Runs: [op.runs, setRuns], Plugins: [op.plugins, setPlugins] }[name];
         if (listing) perform(async () => { for await (const rows of call(listing[0])) listing[1](rows); });
@@ -114,7 +115,7 @@ export function App() {
           <td><button className="quiet" onClick={() => showRun(run.id)}>{run.id}</button></td>
         </tr>)}</tbody>
       </table>}
-    </section> : screen === 'When' ? <When catalog={catalog} perform={perform} busy={busy} fail={setError} showRun={showRun} /> : <section className="plugins">
+    </section> : screen === 'When' ? <When catalog={catalog} perform={perform} busy={busy} fail={setError} showRun={showRun} /> : screen === 'Secrets' ? <Secrets perform={perform} busy={busy} fail={setError} /> : <section className="plugins">
       <h1>Plugins</h1>
       <form className="row" onSubmit={event => { event.preventDefault(); changePlugin(op.add, source); }}>
         <input aria-label="Plugin path or git URL" placeholder="Path or git URL" value={source} onChange={event => setSource(event.target.value)} required />
@@ -134,7 +135,7 @@ export function App() {
       <form className="run-inputs" onSubmit={event => { event.preventDefault(); run(); }}>
         <h2>Run inputs</h2>{Object.entries(workflow.inputs || {}).map(([name, port]) => <label className="port" key={name}>
           {name}<small>{type(port)}</small>
-          <Field port={port} value={runInputs[name]} onChange={next => setRunInputs(set(runInputs, [name], next))} catalog={catalog} />
+          <Field port={port} value={runInputs[name]} onChange={next => setRunInputs(set(runInputs, [name], next))} catalog={catalog} references={false} />
         </label>)}
         <div className="row"><button type="button" onClick={() => setEnterInputs(false)}>Cancel</button><button className="primary" type="submit">Run</button></div>
       </form>

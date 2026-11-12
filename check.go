@@ -176,6 +176,11 @@ func (c *checker) compile(step *Step, location string, tree Values, path valuePa
 	}
 	step.In = parsed
 	p.Inputs, p.Outputs = p.Inputs.substitute(types), p.Outputs.substitute(types)
+	for _, input := range keys(bound.Values) {
+		if err := c.project.checkSecrets(bound.Values[input], p.Inputs[input].Type, valuePath{input}); err != nil {
+			c.error(location, input, err)
+		}
+	}
 	if !node.NoOutsideEffect && node.Workflow == nil {
 		p.effect = location + " (" + node.Name + ")"
 	}

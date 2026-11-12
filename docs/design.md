@@ -44,7 +44,7 @@ Types are names, checked when connecting, with no implicit conversion:
 
 - A capital letter in a description (`T`, `U`) stands for "the same type wherever this letter appears" in that one use of the node.
 - Where a type is `any` or an unstated `object`, the connection is allowed and shown as unchecked. The value is checked against what the consumer expects before the consumer starts, and a node's outputs are checked against its description when it returns.
-- Secret names and handles can be passed through workflows, boxes and control nodes as opaque references. A secret is turned into its real value only when the core calls the plugin operation that has the `secret` input. Records show secret inputs by name; the core cannot stop a plugin from putting a credential into its own output or error.
+- Secret names and handles can be passed through workflows, boxes and control nodes as opaque references. A secret is turned into its real value only when the core calls a node that is not a workflow and declares a `secret` input; a control node that merely passes one along sees only the name. A secret named in a workflow but not stored is reported as a problem before anything runs. Records show secret inputs by name. If the node's outputs or error contain the value exactly, it is replaced by the name before anything is recorded or passed on; an encoded or transformed copy is not recognised, and a plugin is trusted code that can still send the value elsewhere.
 
 ## Workflow
 

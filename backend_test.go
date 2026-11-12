@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -248,7 +249,9 @@ func TestFollowRunOrder(t *testing.T) {
 				previous = i
 			}
 		case <-ctx.Done():
-			t.Fatal("follow did not finish")
+			stack := make([]byte, 1<<20)
+			n := runtime.Stack(stack, true)
+			t.Fatalf("follow did not finish\n%s", stack[:n])
 		}
 	}
 }
@@ -303,7 +306,9 @@ func TestStopRunsAndBackend(t *testing.T) {
 				t.Fatalf("backend shutdown did not cancel its request: %v", err)
 			}
 		case <-ctx.Done():
-			t.Fatal("follow did not finish")
+			stack := make([]byte, 1<<20)
+			n := runtime.Stack(stack, true)
+			t.Fatalf("follow did not finish\n%s", stack[:n])
 		}
 		run, err := p.ShowRun(id)
 		if err != nil || run.State != "interrupted" || run.Steps["wait"].State != "interrupted" || !strings.Contains(run.Error, "outcome unknown") {

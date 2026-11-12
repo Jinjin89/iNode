@@ -16,10 +16,11 @@ import (
 	"syscall"
 
 	"go.yaml.in/yaml/v3"
+	"golang.org/x/term"
 	"inode"
 )
 
-const usage = "usage: inode run <node> key=value ... | nodes | show <node> | check <workflow or JSON> | save <workflow> <version> <JSON> | runs [show|stop|follow|again <id>] | trigger add <kind> key=value ... run=<node> key=value ... | trigger list/on/off/remove/clear [name] | add <path or git URL> | remove <plugin> | plugins | start | stop | help | version"
+const usage = "usage: inode run <node> key=value ... | nodes | show <node> | check <workflow or JSON> | save <workflow> <version> <JSON> | runs [show|stop|follow|again <id>] | trigger add <kind> key=value ... run=<node> key=value ... | trigger list/on/off/remove/clear [name] | secret set <name> (prompt or stdin; one trailing line ending removed) | secret list | secret remove <name> | add <path or git URL> | remove <plugin> | plugins | start | stop | help | version"
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -53,6 +54,9 @@ func command(ctx context.Context, args []string, out, diagnostic io.Writer) erro
 		}
 	}
 	n, exists := inode.OperationArgs(operation)
+	if operation == "secret set" {
+		n = 1
+	}
 	if operation == "start" && len(rest) == 0 {
 		exists = true
 	}
@@ -102,15 +106,35 @@ func command(ctx context.Context, args []string, out, diagnostic io.Writer) erro
 			}
 		}
 	}
+	if operation == "secret set" {
+		var value []byte
+		fd := int(os.Stdin.Fd())
+		if term.IsTerminal(fd) {
+			fmt.Fprint(diagnostic, "Secret value: ")
+			value, err = term.ReadPassword(fd)
+			fmt.Fprintln(diagnostic)
+		} else {
+			value, err = io.ReadAll(os.Stdin)
+		}
+		if err != nil {
+			return err
+		}
+		secret := string(value)
+		if text, ok := strings.CutSuffix(secret, "\n"); ok {
+			secret = strings.TrimSuffix(text, "\r")
+		}
+		arguments = append(arguments, secret)
+	}
 	err = client.Call(ctx, operation, arguments, func(data json.RawMessage) error {
-		columns := map[string][]func(inode.Values) any{
+		columns := map[string][]func(any) any{
 			"nodes":        {field("name"), field("doc")},
 			"runs":         {field("id"), field("node"), field("state"), field("trigger")},
 			"plugins":      {field("name"), field("version"), field("state"), field("source")},
 			"trigger list": {field("name"), triggerInstruction, field("state"), runField("current"), field("waiting"), runField("last"), runField("last_failure"), field("error")},
+			"secret list":  {func(row any) any { return row }},
 		}[operation]
 		if len(columns) > 0 {
-			var rows []inode.Values
+			var rows []any
 			if err := json.Unmarshal(data, &rows); err != nil {
 				return err
 			}
@@ -156,13 +180,13 @@ func command(ctx context.Context, args []string, out, diagnostic io.Writer) erro
 	return err
 }
 
-func field(name string) func(inode.Values) any {
-	return func(row inode.Values) any { return row[name] }
+func field(name string) func(any) any {
+	return func(row any) any { return row.(inode.Values)[name] }
 }
 
-func runField(name string) func(inode.Values) any {
-	return func(row inode.Values) any {
-		run, _ := row[name].(map[string]any)
+func runField(name string) func(any) any {
+	return func(row any) any {
+		run, _ := field(name)(row).(map[string]any)
 		if run == nil {
 			return nil
 		}
@@ -174,8 +198,8 @@ func runField(name string) func(inode.Values) any {
 	}
 }
 
-func triggerInstruction(row inode.Values) any {
-	flow, _ := row["workflow"].(map[string]any)
+func triggerInstruction(row any) any {
+	flow, _ := field("workflow")(row).(map[string]any)
 	if flow == nil {
 		return nil
 	}
@@ -215,7 +239,7 @@ func readInputs(ctx context.Context, client *inode.Client, name string, args []s
 		}
 		var value any = raw
 		port, _ := ports[key].(map[string]any)
-		if port != nil && port["type"] != "text" {
+		if port != nil && port["type"] != "text" && port["type"] != "secret" {
 			if err := yaml.Unmarshal([]byte(raw), &value); err != nil {
 				return nil, fmt.Errorf("input %q: supply a YAML value: %w", key, err)
 			}
