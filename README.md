@@ -20,10 +20,18 @@ Any folder is a project. Start with the examples:
 ```sh
 cp -r examples ~/my-flows && cd ~/my-flows
 inode run greeting name=cat      # prints {"text": "Hello CAT"}
-inode start                      # prints the address of the page; open it in a browser
 ```
 
-The page shows the same workflows on a canvas, where you can edit, run and inspect them. `inode stop` stops the backend.
+## Open the page
+
+```sh
+inode start
+# http://127.0.0.1:35143/#4SPLY4U3NLCLAVHREHB2P5FMJ4
+```
+
+Open the printed address in a browser on the same machine. Copy the whole line: the part after `#` is the key that lets the page in, and it changes on every start. The page shows the same workflows on a canvas, where you can edit, run and inspect them.
+
+`inode stop` stops it. If iNode runs on another machine, forward the port first, for example `ssh -L 35143:127.0.0.1:35143 <host>`, then open the same address locally.
 
 ## A workflow
 
