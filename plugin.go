@@ -18,7 +18,7 @@ type Plugin struct {
 	Doc       string   `json:"doc,omitempty" yaml:"doc,omitempty"`
 	Accesses  []string `json:"accesses,omitempty" yaml:"accesses,omitempty"`
 	Setup     string   `json:"setup,omitempty" yaml:"setup,omitempty"`
-	Installed bool     `json:"-" yaml:"-"`
+	Installed bool     `json:"installed" yaml:"-"`
 }
 
 func (plugin Plugin) validate() error {
@@ -190,10 +190,5 @@ func (p *Project) savePlugins(plugins []Plugin) error {
 	if err != nil {
 		return err
 	}
-	path := filepath.Join(p.dir, "plugins")
-	if err := os.WriteFile(path+".tmp", data, 0644); err != nil {
-		return err
-	}
-	defer os.Remove(path + ".tmp")
-	return os.Rename(path+".tmp", path)
+	return writeFile(filepath.Join(p.dir, "plugins"), data, 0644)
 }

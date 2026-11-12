@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -122,6 +123,8 @@ type Project struct {
 	dir     string
 	nodes   map[string]Node
 	plugins []Plugin
+	mu      *sync.Mutex
+	publish func(*Record) // Called under mu.
 }
 
 func Open(dir string) (*Project, error) {
@@ -129,7 +132,7 @@ func Open(dir string) (*Project, error) {
 	if err != nil {
 		return nil, err
 	}
-	p := &Project{dir: dir}
+	p := &Project{dir: dir, mu: &sync.Mutex{}}
 	return p, p.load()
 }
 

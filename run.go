@@ -12,7 +12,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -27,6 +26,13 @@ type Record struct {
 	Error    string             `json:"error,omitempty"`
 	Steps    map[string]*Record `json:"steps,omitempty"`
 	Workflow *Workflow          `json:"workflow,omitempty"`
+}
+
+func (r *Record) fail(err error) {
+	r.State, r.Error = "failed", err.Error()
+	if err == context.Canceled || err == context.DeadlineExceeded {
+		r.State, r.Error = "interrupted", "run interrupted; outcome unknown: "+err.Error()
+	}
 }
 
 func newRecord(p *plan) *Record {
@@ -52,30 +58,38 @@ func (f *runFailure) Unwrap() error { return f.err }
 type execution struct {
 	project *Project
 	root    *Record
-	mu      sync.Mutex
+	step    Step
 }
 
 func (e *execution) update(record *Record, err error, change func()) error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	e.project.mu.Lock()
+	defer e.project.mu.Unlock()
 	change()
-	fail := func(err error) {
-		record.State, record.Error = "failed", err.Error()
-		if err == context.Canceled || err == context.DeadlineExceeded {
-			record.State, record.Error = "interrupted", "run interrupted; outcome unknown: "+err.Error()
-		}
-	}
 	if err != nil {
-		fail(err)
+		record.fail(err)
 	}
 	if saveErr := e.project.save(e.root); saveErr != nil {
-		fail(saveErr)
-		return saveErr
+		record.fail(saveErr)
+		err = saveErr
+	}
+	if e.project.publish != nil {
+		e.project.publish(e.root)
 	}
 	return err
 }
 
 func (p *Project) Start(ctx context.Context, name string, inputs Values) (*Record, error) {
+	e, err := p.begin(name, inputs)
+	if e == nil {
+		return nil, err
+	}
+	if err == nil {
+		err = e.run(ctx)
+	}
+	return e.root, err
+}
+
+func (p *Project) begin(name string, inputs Values) (*execution, error) {
 	data, err := normalise(inputs)
 	if err != nil {
 		return nil, fmt.Errorf("%s inputs: use JSON-compatible values: %w", name, err)
@@ -93,8 +107,13 @@ func (p *Project) Start(ctx context.Context, name string, inputs Values) (*Recor
 	step.In = values.Values
 	record := newRecord(step.plan)
 	record.ID = rand.Text()
-	e := execution{project: p, root: record}
-	return record, e.execute(ctx, *step, record, step.plan.Name)
+	e := &execution{project: p, root: record, step: *step}
+	err = e.update(record, nil, func() { record.Inputs = step.In })
+	return e, err
+}
+
+func (e *execution) run(ctx context.Context) error {
+	return e.execute(ctx, e.step, e.root, e.step.plan.Name)
 }
 
 func (e *execution) execute(ctx context.Context, node Step, record *Record, location string) error {
@@ -264,11 +283,7 @@ func (p *Project) save(record *Record) error {
 		return err
 	}
 	path := filepath.Join(dir, record.ID+".json")
-	if err := os.WriteFile(path+".tmp", data, 0600); err != nil {
-		return err
-	}
-	defer os.Remove(path + ".tmp")
-	return os.Rename(path+".tmp", path)
+	return writeFile(path, data, 0600)
 }
 
 func (p *Project) ShowRun(id string) (*Record, error) {

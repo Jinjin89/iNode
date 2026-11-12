@@ -2,7 +2,7 @@
 
 How the model in `design.md` is built. This document follows the model and never the other way round: it may only use concepts defined there (node, run, trigger, plugin). If something here would require the user to learn a new idea, either `design.md` is changed on purpose or this document is simplified.
 
-**Built so far:** the core (catalog, checker, runner, run records), boxes with the control nodes `map`, `choose`, `repeat`, `retry` and `try`, a few built-in nodes, nodes that are programs, plugins installed from a folder or a git repository, and the command line calling the core directly. Not built yet: the long-running backend and its interface, the frontend, triggers, secrets, long-lived plugin processes, `agent`, plugin search.
+**Built so far:** the core (catalog, checker, runner, run records), boxes with the control nodes `map`, `choose`, `repeat`, `retry` and `try`, a few built-in nodes, nodes that are programs, plugins installed from a folder or a git repository, the long-running backend with its interface, and the command line as a client of it. Not built yet: the frontend, saving workflows through the interface, run again and run from here, triggers, secrets, long-lived plugin processes, `agent`, plugin search.
 
 ## Shape
 
@@ -78,7 +78,7 @@ A thin client of the same interface.
 |---|---|
 | `inode run <node> key=value` | starts a run and prints its outputs |
 | `inode nodes`, `inode show <node>` | lists and describes nodes |
-| `inode runs`, `inode runs show <id>` | lists and shows runs |
+| `inode runs`, `inode runs show/follow/stop <id>` | lists, shows, follows and stops runs |
 | `inode trigger add/list/on/off` | manages triggers |
 | `inode search`, `inode add <plugin>` | finds and installs plugins |
 | `inode start`, `inode stop` | starts the backend and opens the frontend; stops the backend |
@@ -106,7 +106,7 @@ my-project/
 
 ## Reach
 
-The control interface listens only on the local machine and requires a credential that is created per project and given to the two clients automatically. Browser requests and live connections are accepted only from the frontend's own address, so another web page cannot drive the backend. Web requests received for triggers arrive on a separate address and never reach the control interface. Managing iNode from another machine is not provided.
+The control interface listens only on the local machine and requires a credential that is created each time the backend starts and given to the two clients automatically through a private file in `.inode/`. Browser requests and live connections are accepted only from the frontend's own address, so another web page cannot drive the backend. Web requests received for triggers arrive on a separate address and never reach the control interface. Managing iNode from another machine is not provided.
 
 ## Stack
 
@@ -115,7 +115,7 @@ The control interface listens only on the local machine and requires a credentia
 | Backend | Go | Ships as one executable with the built frontend inside, which makes installation one step. Cheap concurrent runs and process supervision are what the runner and plugin host need. |
 | Frontend | TypeScript, React, React Flow | React Flow is the usual library for node canvases and can draw nodes inside nodes. That is only drawing; the backend stays the authority on what a box means. |
 | Storage | Plain folders: one JSON file per run. SQLite when listing and searching runs need it. | Local, no server, simple to back up. |
-| Client to backend | JSON over HTTP, with a WebSocket for watching runs | Any language can call it. |
+| Client to backend | JSON over HTTP: a request names one operation and its arguments, and the reply is one JSON line per value, or one error. Following a run is a reply that stays open and sends the run's current record at each change; a slow follower skips to the newest. | Any language can call it, and it needs nothing beyond HTTP. |
 | Plugins | Separate processes exchanging JSON; a small Python helper library for authors | Plugins are not tied to the backend's language. |
 | Python plugins | Own environment per plugin, created at install | Installation also provides a suitable Python or reports clearly that one is missing. |
 
