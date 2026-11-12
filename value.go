@@ -2,112 +2,19 @@ package inode
 
 import (
 	"fmt"
-	"reflect"
 	"strconv"
 	"strings"
 )
 
-type Type struct {
-	Name string
-	Item *Type
-}
-
-var (
-	textType   = Type{Name: "text"}
-	numberType = Type{Name: "number"}
-	boolType   = Type{Name: "bool"}
-	anyType    = Type{Name: "any"}
-	objectType = Type{Name: "object"}
-	listType   = Type{Name: "list", Item: &anyType}
-)
-
-func (t *Type) UnmarshalText(data []byte) error {
-	name := string(data)
-	if item, ok := strings.CutPrefix(name, "list of "); ok {
-		var element Type
-		if err := element.UnmarshalText([]byte(item)); err != nil {
-			return err
-		}
-		*t = Type{Name: "list", Item: &element}
-		return nil
-	}
-	for _, known := range []Type{textType, numberType, boolType, anyType, objectType, listType} {
-		if name == known.Name {
-			*t = known
-			return nil
-		}
-	}
-	return fmt.Errorf("unsupported type %q; use text, number, bool, any, object, list, or list of a supported type", name)
-}
-
-func (t Type) String() string {
-	if t.Item != nil {
-		return t.Name + " of " + t.Item.String()
-	}
-	return t.Name
-}
-
-func (t Type) MarshalText() ([]byte, error) { return []byte(t.String()), nil }
-
-func (t Type) fits(want Type) bool {
-	return t.Name == "any" || want.Name == "any" || t.Name == want.Name && (t.Name != "list" || t.Item.fits(*want.Item))
-}
-
-func (t Type) unchecked() bool {
-	return t.Name == "any" || t.Name == "object" || t.Item != nil && t.Item.unchecked()
-}
-
-func typeOf(value any) Type {
-	switch value := value.(type) {
-	case Type:
-		return value
-	case string:
-		return textType
-	case float64:
-		return numberType
-	case bool:
-		return boolType
-	case map[string]any:
-		return objectType
-	case []any:
-		item := anyType
-		if len(value) > 0 {
-			item = typeOf(value[0])
-			for _, next := range value[1:] {
-				if !reflect.DeepEqual(item, typeOf(next)) {
-					item = anyType
-					break
-				}
-			}
-		}
-		return Type{Name: "list", Item: &item}
-	}
-	return anyType
-}
-
-func match(value any, want Type) error {
-	if want.Name == "any" {
-		return nil
-	}
-	if leaf, ok := value.(Type); ok {
-		if leaf.fits(want) {
-			return nil
-		}
-	} else if list, ok := value.([]any); ok && want.Name == "list" {
-		for i, item := range list {
-			if err := match(item, *want.Item); err != nil {
-				return fmt.Errorf("item %d: %w", i, err)
-			}
-		}
-		return nil
-	} else if typeOf(value).Name == want.Name {
-		return nil
-	}
-	return fmt.Errorf("needs %s, got %s; supply a %s value or output", want, typeOf(value), want)
-}
-
 func selectPath(value any, parts []string) (any, error) {
 	for _, part := range parts {
+		if load, ok := value.(func() (any, error)); ok {
+			var err error
+			value, err = load()
+			if err != nil {
+				return nil, err
+			}
+		}
 		var next any
 		var names []string
 		found, list := false, false
@@ -125,8 +32,13 @@ func selectPath(value any, parts []string) (any, error) {
 			}
 		case Type:
 			list = current.Name == "list"
-			if current.Name == "any" || current.Name == "object" {
+			if current.Name == "any" || current.Name == "object" && current.Fields == nil {
 				next, found = anyType, true
+			} else if current.Fields != nil {
+				next, found = current.Fields[part]
+				if !found {
+					names = keys(current.Fields)
+				}
 			} else if list && indexErr == nil && index >= 0 {
 				next, found = *current.Item, true
 			}
@@ -148,47 +60,169 @@ func selectPath(value any, parts []string) (any, error) {
 	return value, nil
 }
 
-func resolve(value any, path string, tree Values, visit func([]string, string, any)) (any, error) {
-	switch value := value.(type) {
-	case string:
-		if strings.HasPrefix(value, "==") {
-			return value[1:], nil
+// A node-valued port is a leaf even when its syntax is an object.
+func walk(value any, want Type, path string, leaf func(any, Type, string) (any, error)) (any, error) {
+	if want.Name != "node" {
+		switch v := value.(type) {
+		case []any:
+			result := make([]any, len(v))
+			itemType := anyType
+			if want.Item != nil {
+				itemType = *want.Item
+			}
+			for i, item := range v {
+				var err error
+				result[i], err = walk(item, itemType, fmt.Sprintf("%s.%d", path, i), leaf)
+				if err != nil {
+					return nil, err
+				}
+			}
+			value = result
+		case map[string]any:
+			result := Values{}
+			for _, name := range keys(v) {
+				field := anyType
+				if typ, exists := want.Fields[name]; exists {
+					field = typ
+				}
+				var err error
+				result[name], err = walk(v[name], field, strings.TrimPrefix(path+"."+name, "."), leaf)
+				if err != nil {
+					return nil, err
+				}
+			}
+			value = result
 		}
-		if strings.HasPrefix(value, "=") {
-			ref := value[1:]
-			parts := strings.Split(ref, ".")
-			if len(parts) < 2 {
-				return nil, fmt.Errorf("input %q: =%s needs a step and output; use =step.output or == for literal text starting with =", path, ref)
-			}
-			selected, err := selectPath(tree, parts)
-			if err != nil {
-				return nil, fmt.Errorf("input %q: =%s: %w", path, ref, err)
-			}
-			if visit != nil {
-				visit(parts, path, selected)
-			}
-			return selected, nil
-		}
-	case []any:
-		result := make([]any, len(value))
-		for i, item := range value {
-			var err error
-			result[i], err = resolve(item, fmt.Sprintf("%s.%d", path, i), tree, visit)
-			if err != nil {
-				return nil, err
-			}
-		}
-		return result, nil
-	case map[string]any:
-		result := Values{}
-		for _, key := range keys(value) {
-			item, err := resolve(value[key], strings.TrimPrefix(path+"."+key, "."), tree, visit)
-			if err != nil {
-				return nil, err
-			}
-			result[key] = item
-		}
-		return result, nil
 	}
-	return value, nil
+	return leaf(value, want, path)
+}
+
+type reference struct {
+	Step, Input string
+	Unchecked   bool
+}
+
+func resolve(value any, path string, tree Values) (any, []reference, error) {
+	var found []reference
+	result, err := walk(value, anyType, path, func(value any, _ Type, path string) (any, error) {
+		switch v := value.(type) {
+		case string:
+			if strings.HasPrefix(v, "==") {
+				return v[1:], nil
+			}
+			if strings.HasPrefix(v, "=") {
+				parts := strings.Split(v[1:], ".")
+				if len(parts) < 2 {
+					return nil, Problem{Input: path, Message: v + " needs a step and output; use =step.output or == for literal text starting with ="}
+				}
+				selected, err := selectPath(tree, parts)
+				if err != nil {
+					return nil, Problem{Input: path, Message: v + ": " + err.Error()}
+				}
+				found = append(found, reference{parts[0], path, typeOf(selected).unchecked()})
+				return selected, nil
+			}
+		case *Step:
+			bound := *v
+			inputs, refs, err := resolve(v.In, path+".in", tree)
+			if err != nil {
+				return nil, err
+			}
+			bound.In = inputs.(Values)
+			found = append(found, refs...)
+			return &bound, nil
+		}
+		return value, nil
+	})
+	return result, found, err
+}
+
+func normalise(value any) (any, error) {
+	return walk(value, anyType, "", func(value any, _ Type, _ string) (any, error) {
+		switch value.(type) {
+		case *Step, map[string]any, []any:
+			return value, nil
+		}
+		return jsonData(value)
+	})
+}
+
+func match(value any, want Type, types map[string]Type) (bool, error) {
+	got := typeOf(value)
+	if want.variable() {
+		if bound, exists := types[want.Name]; exists {
+			return match(value, bound, types)
+		}
+		if got.Name == "any" {
+			return true, nil
+		}
+		types[want.Name], want = got, got
+	}
+	if want.Name == "any" {
+		return false, nil
+	}
+	if leaf, ok := value.(Type); ok && leaf.Name == "any" {
+		return true, nil
+	}
+	unchecked := false
+	switch v := value.(type) {
+	case Type:
+		if v.Name != want.Name {
+			break
+		}
+		if v.Name == "object" && (v.Fields == nil || want.Fields == nil) {
+			return true, nil
+		}
+		if v.Name == "object" || v.Name == "node" {
+			if v.Name == "node" && len(v.Fields) != len(want.Fields) {
+				return false, fmt.Errorf("open input count does not match %s; fill or expose one input", want)
+			}
+			return match(v.shape(), Type{Name: "object", Fields: want.Fields}, types)
+		}
+		if v.Name == "list" {
+			return match(v.shape(), want, types)
+		}
+		return false, nil
+	case *Step:
+		return match(got, want, types)
+	case []any:
+		if want.Name != "list" {
+			break
+		}
+		for i, item := range v {
+			unknown, err := match(item, *want.Item, types)
+			if err != nil {
+				return false, fmt.Errorf("item %d: %w", i, err)
+			}
+			unchecked = unchecked || unknown
+		}
+		return unchecked, nil
+	case map[string]any:
+		if want.Name != "object" {
+			break
+		}
+		if want.Fields == nil {
+			return true, nil
+		}
+		if len(v) != len(want.Fields) {
+			break
+		}
+		for _, name := range keys(want.Fields) {
+			item, exists := v[name]
+			if !exists {
+				return false, fmt.Errorf("missing field %q; supply it", name)
+			}
+			unknown, err := match(item, want.Fields[name], types)
+			if err != nil {
+				return false, fmt.Errorf("field %q: %w", name, err)
+			}
+			unchecked = unchecked || unknown
+		}
+		return unchecked, nil
+	default:
+		if got.Name == want.Name {
+			return false, nil
+		}
+	}
+	return false, fmt.Errorf("needs %s, got %s; supply a %s value or output", want, got, want)
 }

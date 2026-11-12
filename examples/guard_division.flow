@@ -1,0 +1,13 @@
+doc: Return zero if division fails.
+inputs: {divisor: {type: number, default: 0}}
+steps:
+  divide:
+    use: try
+    in:
+      do: {use: number.divide, in: {a: 1, b: =inputs.divisor}}
+      on_error:
+        use:
+          inputs: {error: object}
+          steps: {}
+          outputs: {value: 0}
+outputs: {value: =divide.result}

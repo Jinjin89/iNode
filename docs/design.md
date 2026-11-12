@@ -39,7 +39,7 @@ Types are names, checked when connecting, with no implicit conversion:
 | `list of T`, `object{name: T, …}` | A list with its item type; an object with named fields. Plain `list` and `object` leave the contents unstated. |
 | `file` | A reference to a file kept by the core, identified by its contents. This is how plugins exchange large or binary data. |
 | `secret` | The name of a stored secret. |
-| `node(T) gives U` | A node to be called by the receiver: the types of its open inputs and of its single output. |
+| `node(T) gives U`, `node() gives U` | A node to be called by the receiver: the type of its one open input, if it has one, and of its single output. |
 | plugin-named handles | A live object such as a loaded model. Only nodes of the plugin that created it can operate on it, and it lives as long as that plugin's process. |
 
 - A capital letter in a description (`T`, `U`) stands for "the same type wherever this letter appears" in that one use of the node.
@@ -50,13 +50,15 @@ Types are names, checked when connecting, with no implicit conversion:
 
 A workflow is a node made of steps. Each step's inputs are filled by values or by references to other steps (`=page.body`, with dotted paths into data such as `=resp.json.user.name`, where a number picks a list item: `=feed.items.0.title`). `=inputs.url` refers to the workflow's own input. A reference can also sit inside a written list or object. A text that really starts with `=` is written with `==`. Step and port names contain no dots. Any input can be **exposed** as an input of the workflow, and any output as an output of the workflow, which is what makes the workflow a node.
 
-**A node in a `node` input is not a step.** It does not run by itself; the receiving step calls it. In the frontend the input is a box. A box holds a saved node or steps built directly inside it (an inline workflow, the same thing without a file name). Anything inside the box runs when the box's owner calls it. A reference from inside a box to a step outside is read once per run of the enclosing workflow and drawn as entering the box.
+**A node in a `node` input is not a step.** It does not run by itself; the receiving step calls it. In the frontend the input is a box. A box holds a saved node or steps built directly inside it (an inline workflow, the same thing without a file name). Anything inside the box runs when the box's owner calls it.
 
-A node passed this way must have exactly one output; a workflow that needs to return several things exposes one object. The standard control nodes:
+In a file, a node in a box is written like a step: `{use: …, in: {…}}`, or just its name. `use` is a node's name or a workflow written in place. `in` fills some of its inputs; a reference there is read once per run of the enclosing workflow, before the box's owner starts, and is drawn as entering the box. Steps inside a box see only the box's own inputs and steps, so everything that comes from outside enters this way.
+
+A node passed this way has at most one open input and exactly one output. A node that needs several values takes one object, and one that returns several things exposes one object. The standard control nodes:
 
 | Node | Contract |
 |---|---|
-| `map(over: list of T, do: node(T) gives U)` | Calls `do` once per item. `result: list of U`, in the same order. |
+| `map(over: list of T, do: node(T) gives U)` | Calls `do` once per item, one at a time. `result: list of U`, in the same order. |
 | `choose(if: bool, then: node() gives T, else: node() gives T)` | Calls one of the two. `result: T`. |
 | `repeat(start: T, do: node(T) gives object{state: T, done: bool}, max: number)` | Calls `do` with the state until `done`. `result: T`, the final state. Reaching `max` calls without `done` fails. Covers paging and polling. |
 | `retry(do: node() gives T, times: number)` | Calls `do` up to `times` times in total until it succeeds. `result: T`. Accepts only nodes with no outside effect. |
@@ -213,6 +215,7 @@ These are deliberate. Each keeps the model small.
 | Automatic recovery or reuse of past results | Run again is always fresh. Run from here is the explicit exception. |
 | Exactly-once outside actions | Interrupted runs are marked and left to the user. |
 | `retry` around a step that writes | A plugin retries its own writes internally, where it knows its guarantees. |
+| `retry` around a node that a workflow received as its own input | Its effect is unknown, so it is refused. Put the `retry` where the node is chosen. |
 | Streaming data between nodes | A node returns once. Split the data and `map` over it. Progress messages are display only. |
 | Waits and approvals that survive a restart | A waiting run holds its place only while the backend stays up. |
 | Cleanup guaranteed after failure | `try(do, on_error)` covers the common case; there is no "finally". |

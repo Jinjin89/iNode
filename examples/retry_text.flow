@@ -1,0 +1,4 @@
+doc: Retry an uppercase operation, at most twice.
+steps:
+  text: {use: retry, in: {times: 2, do: {use: text.upper, in: {text: hi}}}}
+outputs: {text: =text.result}

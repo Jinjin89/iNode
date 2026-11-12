@@ -1,0 +1,10 @@
+doc: Pick one of two short texts.
+inputs: {yes: {type: bool, default: true}}
+steps:
+  pick:
+    use: choose
+    in:
+      if: =inputs.yes
+      then: {use: text.upper, in: {text: yes}}
+      else: {use: text.upper, in: {text: no}}
+outputs: {text: =pick.result}

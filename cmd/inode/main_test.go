@@ -26,6 +26,8 @@ func TestCommands(t *testing.T) {
 		{[]string{"check", "upper.flow"}, `"problems": []`, false},
 		{[]string{"run", "upper", "text=hi"}, `"text": "HI"`, false},
 		{[]string{"run", "text.upper", "text=123"}, `"text": "123"`, false},
+		{[]string{"run", "map", "over=[hi, yo]", "do=text.upper"}, `"YO"`, false},
+		{[]string{"run", "retry", "times=1", "do={use: text.upper, in: {text: hi}}"}, `"result": "HI"`, false},
 		{[]string{"run", "number.add", "a=2", "b=3"}, `"value": 5`, false},
 		{[]string{"run", "text.join", "parts=[a, b]", "separator=,"}, `"text": "a,b"`, false},
 		{[]string{"run", "data.value", "value==a.b"}, `"value": "=a.b"`, false},

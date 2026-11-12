@@ -1,0 +1,15 @@
+doc: Count from zero to two.
+steps:
+  count:
+    use: repeat
+    in:
+      start: 0
+      max: 2
+      do:
+        use:
+          inputs: {n: number}
+          steps:
+            next: {use: number.add, in: {a: =inputs.n, b: 1}}
+            done: {use: number.less, in: {a: 1, b: =next.value}}
+          outputs: {reply: {state: =next.value, done: =done.value}}
+outputs: {count: =count.result}

@@ -1,0 +1,4 @@
+doc: Uppercase two short words.
+steps:
+  words: {use: map, in: {over: [hi, yo], do: text.upper}}
+outputs: {words: =words.result}

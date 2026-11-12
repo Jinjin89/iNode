@@ -42,7 +42,7 @@ func TestChecker(t *testing.T) {
 		{"missing workflow input", `steps: {bad: {use: text.upper, in: {text: =inputs.absent}}}`, "x/bad", "text", `no field "absent"`},
 		{"primitive path", `steps: {a: {use: text.upper, in: {text: hi}}, bad: {use: text.upper, in: {text: =a.text.name}}}`, "x/bad", "text", `no field "name"`},
 		{"list element", `steps: {bad: {use: text.join, in: {parts: [hi, 2]}}}`, "x/bad", "parts", "item 1"},
-		{"typed list", "inputs: {parts: list of number}\nsteps: {bad: {use: text.join, in: {parts: =inputs.parts}}}", "x/bad", "parts", "needs list of text"},
+		{"typed list", "inputs: {parts: list of number}\nsteps: {bad: {use: text.join, in: {parts: =inputs.parts}}}", "x/bad", "parts", "needs text"},
 		{"unsupported type", `inputs: {x: secret}`, "x", "x", "unsupported type"},
 		{"invalid default", `inputs: {x: {type: text, default: 3}}`, "x", "x", "fix the default"},
 		{"missing after", `steps: {bad: {use: data.value, in: {value: 1}, after: [absent]}}`, "x/bad", "after", "unknown step"},
@@ -116,8 +116,9 @@ func TestExamples(t *testing.T) {
 				t.Fatalf("got %v, %v; want %v", run, err, test.want)
 			}
 			saved, err := p.ShowRun(run.ID)
-			expected, dataErr := jsonData(run)
-			if err != nil || dataErr != nil || !reflect.DeepEqual(saved, expected) {
+			expected, dataErr := jsonData[any](run)
+			actual, readErr := jsonData[any](saved)
+			if err != nil || dataErr != nil || readErr != nil || !reflect.DeepEqual(actual, expected) {
 				t.Fatalf("record round trip: %v, %v", saved, err)
 			}
 			if test.name == "greeting" {
@@ -187,7 +188,7 @@ func TestUncheckedEdges(t *testing.T) {
 func TestOutputEdges(t *testing.T) {
 	for _, outputs := range []Values{{"value": "wrong"}, {}, {"value": 1, "extra": true}} {
 		p := project(t, nil)
-		p.nodes["bad"] = Node{Name: "bad", Outputs: Ports{"value": {Type: numberType}}, run: func(context.Context, Values) (Values, error) { return outputs, nil }}
+		p.nodes["bad"] = Node{Name: "bad", Outputs: Ports{"value": {Type: numberType}}, run: func(context.Context, Values, Call) (Values, error) { return outputs, nil }}
 		run, err := p.Start(context.Background(), "bad", nil)
 		if err == nil || !strings.Contains(err.Error(), "outputs.") || run.State != "failed" {
 			t.Fatalf("invalid outputs accepted: %v, %v", run, err)
@@ -204,7 +205,7 @@ steps:
 outputs: {a: =a.value, b: =b.value}
 `})
 	var calls atomic.Int32
-	p.nodes["count"] = Node{Name: "count", Outputs: Ports{"value": {Type: numberType}}, run: func(context.Context, Values) (Values, error) { return Values{"value": calls.Add(1)}, nil }}
+	p.nodes["count"] = Node{Name: "count", Outputs: Ports{"value": {Type: numberType}}, run: func(context.Context, Values, Call) (Values, error) { return Values{"value": calls.Add(1)}, nil }}
 	run, err := p.Start(context.Background(), "x", nil)
 	if err != nil || calls.Load() != 1 || run.Outputs["a"] != float64(2) || run.Outputs["b"] != float64(3) {
 		t.Fatalf("fanout: %v, %v, calls %d", run, err, calls.Load())
@@ -223,7 +224,7 @@ steps:
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	started, release := make(chan struct{}), make(chan struct{})
-	p.nodes["hold"] = Node{Name: "hold", run: func(ctx context.Context, _ Values) (Values, error) {
+	p.nodes["hold"] = Node{Name: "hold", run: func(ctx context.Context, _ Values, _ Call) (Values, error) {
 		close(started)
 		select {
 		case <-release:
@@ -232,7 +233,7 @@ steps:
 			return nil, ctx.Err()
 		}
 	}}
-	p.nodes["source"] = Node{Name: "source", Outputs: Ports{"value": {Type: anyType}}, run: func(ctx context.Context, _ Values) (Values, error) {
+	p.nodes["source"] = Node{Name: "source", Outputs: Ports{"value": {Type: anyType}}, run: func(ctx context.Context, _ Values, _ Call) (Values, error) {
 		select {
 		case <-started:
 			return Values{"value": false}, nil
@@ -421,7 +422,7 @@ func TestBuiltinDeclarations(t *testing.T) {
 					t.Fatalf("invalid port %s: %+v, %v", name, port, err)
 				}
 				if port.Default != nil {
-					if err := match(port.Default, port.Type); err != nil {
+					if _, err := match(port.Default, port.Type, nil); err != nil {
 						t.Fatal(err)
 					}
 				}

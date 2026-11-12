@@ -4,11 +4,13 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -29,11 +31,23 @@ type Record struct {
 
 func newRecord(p *plan) *Record {
 	r := &Record{Node: p.Name, Workflow: p.Workflow, State: "waiting", Steps: map[string]*Record{}}
-	for id, child := range p.steps {
-		r.Steps[id] = newRecord(child)
+	if p.Workflow != nil {
+		for id, child := range p.Workflow.Steps {
+			r.Steps[id] = newRecord(child.plan)
+		}
 	}
 	return r
 }
+
+type Call func(context.Context, *Step, any) (any, error)
+
+type runFailure struct {
+	step string
+	err  error
+}
+
+func (f *runFailure) Error() string { return fmt.Sprintf("step %q: %s", f.step, f.err) }
+func (f *runFailure) Unwrap() error { return f.err }
 
 type execution struct {
 	project *Project
@@ -62,25 +76,29 @@ func (e *execution) update(record *Record, err error, change func()) error {
 }
 
 func (p *Project) Start(ctx context.Context, name string, inputs Values) (*Record, error) {
-	plan, report := p.check(name)
-	if len(report.Problems) > 0 {
-		return nil, Problems(report.Problems)
-	}
-	inputs, err := jsonData(inputs)
+	data, err := normalise(inputs)
 	if err != nil {
 		return nil, fmt.Errorf("%s inputs: use JSON-compatible values: %w", name, err)
 	}
-	inputs, problems := bind(plan.Inputs, inputs, name, "")
-	if len(problems) > 0 {
-		return nil, problems
+	inputs, _ = data.(Values)
+	step, bound, report := p.prepare(name, inputs)
+	report.Problems = append(report.Problems, missing(bound.Open, name, "")...)
+	if len(report.Problems) > 0 {
+		return nil, Problems(report.Problems)
 	}
-	record := newRecord(plan)
+	values := bind(step.plan.Inputs, step.In, step.plan.Name, "", nil)
+	if len(values.Problems) > 0 {
+		return nil, values.Problems
+	}
+	step.In = values.Values
+	record := newRecord(step.plan)
 	record.ID = rand.Text()
 	e := execution{project: p, root: record}
-	return record, e.execute(ctx, plan, record, inputs)
+	return record, e.execute(ctx, *step, record, step.plan.Name)
 }
 
-func (e *execution) execute(ctx context.Context, plan *plan, record *Record, inputs Values) error {
+func (e *execution) execute(ctx context.Context, node Step, record *Record, location string) error {
+	plan, inputs := node.plan, node.In
 	err := e.update(record, nil, func() {
 		record.State, record.Started, record.Inputs = "running", time.Now().UTC(), inputs
 	})
@@ -90,38 +108,92 @@ func (e *execution) execute(ctx context.Context, plan *plan, record *Record, inp
 	}
 	if err == nil {
 		if plan.Workflow != nil {
-			outputs, err = e.workflow(ctx, plan, record, inputs)
+			outputs, err = e.workflow(ctx, plan, record, inputs, location)
 		} else {
-			outputs, err = plan.run(ctx, inputs)
+			outputs, err = plan.run(ctx, inputs, func(ctx context.Context, node *Step, value any) (any, error) {
+				return e.call(ctx, record, node, location, value)
+			})
 		}
 	}
 	if outputs != nil {
-		var dataErr error
-		outputs, dataErr = jsonData(outputs)
+		data, dataErr := normalise(outputs)
+		outputs, _ = data.(Values)
 		if dataErr != nil {
 			err = fmt.Errorf("node %q must return JSON-compatible outputs: %w", plan.Name, dataErr)
 		}
 	}
 	if err == nil {
-		if _, problems := bind(plan.Outputs, outputs, plan.Name, "outputs."); len(problems) > 0 {
+		bound := bind(plan.Outputs, outputs, location, "outputs.", nil)
+		outputs = bound.Values
+		problems := append(bound.Problems, missing(bound.Open, location, "outputs.")...)
+		if len(problems) > 0 {
 			err = problems
+		}
+		if err == nil && node.contract != nil {
+			port := keys(plan.Outputs)[0]
+			bound = bind(Ports{port: {Type: node.contract.Fields["output"]}}, outputs, location, "outputs.", nil)
+			outputs = bound.Values
+			if len(bound.Problems) > 0 {
+				err = bound.Problems
+			}
 		}
 	}
 	if ctx.Err() != nil {
 		err = ctx.Err()
 	}
-	return e.update(record, err, func() {
+	err = e.update(record, err, func() {
 		record.State, record.Finished, record.Outputs = "done", time.Now().UTC(), outputs
 	})
+	var failed *runFailure
+	if err != nil && !errors.As(err, &failed) {
+		err = &runFailure{location, err}
+	}
+	return err
 }
 
-func (e *execution) workflow(ctx context.Context, plan *plan, record *Record, inputs Values) (Values, error) {
+func (e *execution) call(ctx context.Context, parent *Record, node *Step, location string, value any) (any, error) {
+	inputs := Values{}
+	for name, value := range node.In {
+		inputs[name] = value
+	}
+	var open string
+	for name, port := range node.plan.Inputs {
+		if _, filled := inputs[name]; !filled && port.Default == nil {
+			inputs[name], open = value, name
+		}
+	}
+	child := newRecord(node.plan)
+	var id string
+	if err := e.update(parent, nil, func() { id = strconv.Itoa(len(parent.Steps) + 1); parent.Steps[id] = child }); err != nil {
+		return nil, err
+	}
+	where := location + "/" + id
+	if input, exists := node.contract.Fields["open input"]; exists {
+		bound := bind(Ports{open: {Type: input}}, Values{open: value}, where, "", nil)
+		if len(bound.Problems) > 0 {
+			return nil, e.update(child, &runFailure{where, bound.Problems}, func() { child.Inputs = inputs })
+		}
+		inputs[open] = bound.Values[open]
+	}
+	bound := bind(node.plan.Inputs, inputs, where, "", nil)
+	if len(bound.Problems) > 0 {
+		return nil, e.update(child, &runFailure{where, bound.Problems}, func() { child.Inputs = inputs })
+	}
+	call := *node
+	call.In = bound.Values
+	if err := e.execute(ctx, call, child, where); err != nil {
+		return nil, err
+	}
+	return child.Outputs[keys(node.plan.Outputs)[0]], nil
+}
+
+func (e *execution) workflow(ctx context.Context, plan *plan, record *Record, inputs Values, location string) (Values, error) {
 	type completion struct {
 		step string
 		err  error
 	}
-	finished := make(chan completion, len(plan.steps))
-	waiting := maps.Clone(plan.steps)
+	finished := make(chan completion, len(plan.Workflow.Steps))
+	waiting := maps.Clone(plan.Workflow.Steps)
 	values := Values{"inputs": inputs}
 	running := 0
 	var failure error
@@ -141,23 +213,25 @@ func (e *execution) workflow(ctx context.Context, plan *plan, record *Record, in
 			if !ready {
 				continue
 			}
-			resolved, err := resolve(plan.Workflow.Steps[id].In, plan.Name+"/"+id, values, nil)
+			resolved, _, err := resolve(plan.Workflow.Steps[id].In, "", values)
 			arguments, _ := resolved.(map[string]any)
 			if err == nil {
-				var problems Problems
-				arguments, problems = bind(plan.steps[id].Inputs, arguments, plan.Name+"/"+id, "")
-				if len(problems) > 0 {
-					err = problems
+				bound := bind(plan.Workflow.Steps[id].plan.Inputs, arguments, location+"/"+id, "", nil)
+				arguments = bound.Values
+				if len(bound.Problems) > 0 {
+					err = bound.Problems
 				}
 			}
 			if err != nil {
-				failure = e.update(record.Steps[id], err, func() { record.Steps[id].Inputs = arguments })
+				failure = e.update(record.Steps[id], &runFailure{location + "/" + id, err}, func() { record.Steps[id].Inputs = arguments })
 				break
 			}
 			delete(waiting, id)
 			running++
 			go func() {
-				finished <- completion{id, e.execute(ctx, plan.steps[id], record.Steps[id], arguments)}
+				step := plan.Workflow.Steps[id]
+				step.In = arguments
+				finished <- completion{id, e.execute(ctx, step, record.Steps[id], location+"/"+id)}
 			}()
 		}
 		if running == 0 {
@@ -166,7 +240,7 @@ func (e *execution) workflow(ctx context.Context, plan *plan, record *Record, in
 		result := <-finished
 		running--
 		if result.err != nil && failure == nil {
-			failure = fmt.Errorf("step %q: %w", plan.Name+"/"+result.step, result.err)
+			failure = result.err
 		}
 		if result.err == nil {
 			values[result.step] = record.Steps[result.step].Outputs
@@ -175,7 +249,7 @@ func (e *execution) workflow(ctx context.Context, plan *plan, record *Record, in
 	if failure != nil {
 		return nil, failure
 	}
-	outputs, err := resolve(plan.Workflow.Outputs, plan.Name+"/outputs", values, nil)
+	outputs, _, err := resolve(plan.Workflow.Outputs, "outputs", values)
 	result, _ := outputs.(map[string]any)
 	return result, err
 }

@@ -16,8 +16,9 @@ import (
 type Values = map[string]any
 
 type Port struct {
-	Type    Type `json:"type"`
-	Default any  `json:"default,omitempty"`
+	Type            Type `json:"type"`
+	Default         any  `json:"default,omitempty"`
+	NoOutsideEffect bool `json:"no_outside_effect,omitempty"`
 }
 
 type Ports map[string]Port
@@ -29,30 +30,26 @@ func (ports *Ports) UnmarshalJSON(data []byte) error {
 	}
 	*ports = Ports{}
 	for _, name := range keys(raw) {
-		var port Port
+		var declaration struct {
+			Type    Type `json:"type"`
+			Default any  `json:"default"`
+		}
 		var err error
 		if raw[name][0] == '"' {
-			err = json.Unmarshal(raw[name], &port.Type)
+			err = json.Unmarshal(raw[name], &declaration.Type)
 		} else {
-			decoder := json.NewDecoder(bytes.NewReader(raw[name]))
-			decoder.DisallowUnknownFields()
-			err = decoder.Decode(&port)
+			err = decode(raw[name], &declaration)
 		}
-		if err == nil && port.Type.Name == "" {
+		if err == nil && declaration.Type.Name == "" {
 			err = fmt.Errorf("specify the port's type")
 		}
 		if err == nil && !portName(name) {
 			err = fmt.Errorf("rename the port without dots or equals signs")
 		}
-		if err == nil && port.Default != nil {
-			if err = match(port.Default, port.Type); err != nil {
-				err = fmt.Errorf("fix the default: %w", err)
-			}
-		}
 		if err != nil {
 			return Problem{Input: name, Message: err.Error()}
 		}
-		(*ports)[name] = port
+		(*ports)[name] = Port{Type: declaration.Type, Default: declaration.Default}
 	}
 	return nil
 }
@@ -65,10 +62,41 @@ func (ports Ports) tree() Values {
 	return values
 }
 
+func (ports Ports) substitute(types map[string]Type) Ports {
+	result := Ports{}
+	for name, port := range ports {
+		port.Type = port.Type.substitute(types)
+		result[name] = port
+	}
+	return result
+}
+
 type Step struct {
-	Use   string   `json:"use"`
-	In    Values   `json:"in,omitempty"`
-	After []string `json:"after,omitempty"`
+	Use      Definition `json:"use"`
+	In       Values     `json:"in,omitempty"`
+	After    []string   `json:"after,omitempty"`
+	plan     *plan
+	contract *Type
+}
+
+type Definition struct {
+	Name     string
+	Workflow *Workflow
+}
+
+func (d *Definition) UnmarshalJSON(data []byte) error {
+	if data[0] == '"' {
+		return json.Unmarshal(data, &d.Name)
+	}
+	d.Workflow = &Workflow{}
+	return decode(data, d.Workflow)
+}
+
+func (d Definition) MarshalJSON() ([]byte, error) {
+	if d.Workflow != nil {
+		return json.Marshal(d.Workflow)
+	}
+	return json.Marshal(d.Name)
 }
 
 type Workflow struct {
@@ -86,7 +114,7 @@ type Node struct {
 	Outputs         Ports     `json:"outputs"`
 	NoOutsideEffect bool      `json:"no_outside_effect"`
 	Workflow        *Workflow `json:"workflow,omitempty"`
-	run             func(context.Context, Values) (Values, error)
+	run             func(context.Context, Values, Call) (Values, error)
 	problem         error
 }
 
@@ -111,8 +139,7 @@ func Open(dir string) (*Project, error) {
 		}
 		path := filepath.Join(dir, entry.Name())
 		name := strings.TrimSuffix(entry.Name(), ".flow")
-		if _, exists := p.nodes[name]; exists {
-			node := p.nodes[name]
+		if node, exists := p.nodes[name]; exists {
 			node.problem = fmt.Errorf("%s: rename the workflow; node %q already exists", path, name)
 			p.nodes[name] = node
 			continue
@@ -134,19 +161,23 @@ func readWorkflow(path string) (Workflow, error) {
 		return flow, err
 	}
 	var raw any
-	if err := yaml.NewDecoder(bytes.NewReader(data)).Decode(&raw); err != nil {
-		return flow, fmt.Errorf("%s: fix the workflow YAML: %w", path, err)
-	}
-	data, err = json.Marshal(raw)
+	err = yaml.NewDecoder(bytes.NewReader(data)).Decode(&raw)
 	if err == nil {
-		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.DisallowUnknownFields()
-		err = decoder.Decode(&flow)
+		data, err = json.Marshal(raw)
+	}
+	if err == nil {
+		err = decode(data, &flow)
 	}
 	if err != nil {
 		err = fmt.Errorf("%s: fix the workflow: %w", path, err)
 	}
 	return flow, err
+}
+
+func decode(data []byte, target any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	return decoder.Decode(target)
 }
 
 func (p *Project) Nodes() []Node {
@@ -158,11 +189,16 @@ func (p *Project) Nodes() []Node {
 }
 
 func (p *Project) Describe(name string) (Node, error) {
+	name = strings.TrimSuffix(name, ".flow")
 	plan, report := p.check(name)
 	if len(report.Problems) != 0 {
 		return Node{}, Problems(report.Problems)
 	}
-	return plan.Node, nil
+	node := plan.Node
+	if node.Workflow == nil {
+		node.Inputs, node.Outputs = p.nodes[name].Inputs, p.nodes[name].Outputs
+	}
+	return node, nil
 }
 
 func jsonData[T any](value T) (T, error) {
