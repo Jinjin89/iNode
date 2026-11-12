@@ -119,8 +119,9 @@ type Node struct {
 }
 
 type Project struct {
-	dir   string
-	nodes map[string]Node
+	dir     string
+	nodes   map[string]Node
+	plugins []Plugin
 }
 
 func Open(dir string) (*Project, error) {
@@ -128,37 +129,47 @@ func Open(dir string) (*Project, error) {
 	if err != nil {
 		return nil, err
 	}
-	p := &Project{dir: dir, nodes: builtins(dir)}
-	entries, err := os.ReadDir(dir)
+	p := &Project{dir: dir}
+	return p, p.load()
+}
+
+func (p *Project) register(name string, node Node) {
+	if _, exists := p.nodes[name]; exists {
+		node.problem = fmt.Errorf("node %q has more than one definition; rename one of them", name)
+	}
+	node.Name = name
+	p.nodes[name] = node
+}
+
+func (p *Project) load() error {
+	p.nodes = map[string]Node{}
+	for name, node := range builtins(p.dir) {
+		p.register(name, node)
+	}
+	entries, err := os.ReadDir(p.dir)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".flow") {
 			continue
 		}
-		path := filepath.Join(dir, entry.Name())
+		path := filepath.Join(p.dir, entry.Name())
 		name := strings.TrimSuffix(entry.Name(), ".flow")
-		if node, exists := p.nodes[name]; exists {
-			node.problem = fmt.Errorf("%s: rename the workflow; node %q already exists", path, name)
-			p.nodes[name] = node
-			continue
-		}
-		flow, err := readWorkflow(path)
-		p.nodes[name] = Node{Doc: flow.Doc, Inputs: flow.Inputs, Workflow: &flow, problem: err}
+		var flow Workflow
+		err := readYAML(path, &flow)
+		p.register(name, Node{Doc: flow.Doc, Inputs: flow.Inputs, Workflow: &flow, problem: err})
 	}
-	for name, node := range p.nodes {
-		node.Name = name
-		p.nodes[name] = node
+	if err := p.loadNodes(filepath.Join(p.dir, "nodes"), ""); err != nil {
+		return err
 	}
-	return p, nil
+	return p.loadPlugins()
 }
 
-func readWorkflow(path string) (Workflow, error) {
-	var flow Workflow
+func readYAML(path string, target any) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return flow, err
+		return err
 	}
 	var raw any
 	err = yaml.NewDecoder(bytes.NewReader(data)).Decode(&raw)
@@ -166,12 +177,12 @@ func readWorkflow(path string) (Workflow, error) {
 		data, err = json.Marshal(raw)
 	}
 	if err == nil {
-		err = decode(data, &flow)
+		err = decode(data, target)
 	}
 	if err != nil {
-		err = fmt.Errorf("%s: fix the workflow: %w", path, err)
+		err = fmt.Errorf("%s: %w", path, err)
 	}
-	return flow, err
+	return err
 }
 
 func decode(data []byte, target any) error {

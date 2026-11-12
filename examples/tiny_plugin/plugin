@@ -1,0 +1,6 @@
+name: tiny
+version: "1"
+doc: Add a short greeting
+accesses:
+  - Reads and writes its own greeting file.
+setup: printf 'hi' > nodes/greeting.txt

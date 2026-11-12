@@ -14,7 +14,7 @@ import (
 	"inode"
 )
 
-const usage = "usage: inode run <node> key=value ... | nodes | show <node> | check <workflow> | runs [show <id>]"
+const usage = "usage: inode run <node> key=value ... | nodes | show <node> | check <workflow> | runs [show <id>] | add <path or git URL> | remove <plugin> | plugins"
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -35,6 +35,21 @@ func command(ctx context.Context, args []string, out, diagnostic io.Writer) erro
 	}
 	var result any
 	switch {
+	case args[0] == "add" && len(args) == 2:
+		return project.Add(ctx, args[1], out)
+	case args[0] == "remove" && len(args) == 2:
+		return project.Remove(args[1])
+	case args[0] == "plugins" && len(args) == 1:
+		for _, plugin := range project.Plugins() {
+			state := "missing"
+			if plugin.Installed {
+				state = "installed"
+			}
+			if _, err := fmt.Fprintf(out, "%s\t%s\t%s\t%s\n", plugin.Name, plugin.Version, state, plugin.Source); err != nil {
+				return err
+			}
+		}
+		return nil
 	case args[0] == "nodes" && len(args) == 1:
 		for _, node := range project.Nodes() {
 			if _, err := fmt.Fprintf(out, "%s\t%s\n", node.Name, node.Doc); err != nil {

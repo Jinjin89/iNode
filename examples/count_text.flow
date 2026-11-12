@@ -1,0 +1,5 @@
+doc: Count the words in a short text
+inputs: {text: {type: text, default: a cat}}
+steps:
+  count: {use: count_words, in: {text: =inputs.text}}
+outputs: {count: =count.count}

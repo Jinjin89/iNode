@@ -1,0 +1,5 @@
+doc: Greet a name using the tiny plugin
+inputs: {name: {type: text, default: cat}}
+steps:
+  greet: {use: tiny.greet, in: {name: =inputs.name}}
+outputs: {text: =greet.text}

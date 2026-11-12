@@ -1,0 +1,5 @@
+doc: Greet a name
+inputs: {name: text}
+outputs: {text: text}
+no_outside_effect: true
+run: python3 greet.py

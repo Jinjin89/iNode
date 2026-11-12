@@ -76,14 +76,10 @@ func (c *checker) error(step, input string, err error) {
 
 func (c *checker) compile(step *Step, location string, tree Values) (binding, []reference) {
 	name := strings.TrimSuffix(step.Use.Name, ".flow")
-	node, ok := c.project.nodes[name]
+	node := c.project.lookup(name)
 	if step.Use.Workflow != nil {
 		flow := step.Use.Workflow
-		node, ok = Node{Name: "(inline)", Doc: flow.Doc, Inputs: flow.Inputs, Workflow: flow}, true
-	}
-	if !ok {
-		c.problem(location, "use", fmt.Sprintf("unknown node %q; choose a name from inode nodes", name))
-		return binding{}, nil
+		node = Node{Name: "(inline)", Doc: flow.Doc, Inputs: flow.Inputs, Workflow: flow}
 	}
 	if node.problem != nil {
 		c.error(location, "use", node.problem)

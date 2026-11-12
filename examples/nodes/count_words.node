@@ -1,0 +1,5 @@
+doc: Count the words in a text
+inputs: {text: text}
+outputs: {count: number}
+no_outside_effect: true
+run: python3 count_words.py

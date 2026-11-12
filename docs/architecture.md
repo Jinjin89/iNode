@@ -2,7 +2,7 @@
 
 How the model in `design.md` is built. This document follows the model and never the other way round: it may only use concepts defined there (node, run, trigger, plugin). If something here would require the user to learn a new idea, either `design.md` is changed on purpose or this document is simplified.
 
-**Built so far:** the core (catalog, checker, runner, run records), boxes with the control nodes `map`, `choose`, `repeat`, `retry` and `try`, a few built-in nodes, and the command line calling the core directly. Not built yet: plugins, `agent`, the long-running backend and its interface, the frontend, triggers, secrets.
+**Built so far:** the core (catalog, checker, runner, run records), boxes with the control nodes `map`, `choose`, `repeat`, `retry` and `try`, a few built-in nodes, nodes that are programs, plugins installed from a folder or a git repository, and the command line calling the core directly. Not built yet: the long-running backend and its interface, the frontend, triggers, secrets, long-lived plugin processes, `agent`, plugin search.
 
 ## Shape
 

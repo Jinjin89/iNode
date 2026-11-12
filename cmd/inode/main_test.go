@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -67,5 +68,48 @@ func TestCommands(t *testing.T) {
 	var out, diagnostic bytes.Buffer
 	if err := command(context.Background(), []string{"runs", "show", runs[0].ID}, &out, &diagnostic); err != nil || !strings.Contains(out.String(), runs[0].ID) {
 		t.Fatalf("show run: %s, %v", &out, err)
+	}
+}
+
+func TestPluginCommands(t *testing.T) {
+	source, err := filepath.Abs("../../examples/tiny_plugin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(t.TempDir())
+	if err := os.CopyFS("tiny_plugin", os.DirFS(source)); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		args    []string
+		content string
+	}{
+		{[]string{"add", "tiny_plugin"}, "tiny\t1\nAdd a short greeting\nAccesses:\n- Reads and writes its own greeting file."},
+		{[]string{"plugins"}, "tiny\t1\tinstalled\ttiny_plugin"},
+		{[]string{"nodes"}, "tiny.greet\tGreet a name"},
+		{[]string{"show", "tiny.greet"}, `"name": "tiny.greet"`},
+		{[]string{"run", "tiny.greet", "name=cat"}, `"text": "hi cat"`},
+	} {
+		var out, diagnostic bytes.Buffer
+		if err := command(context.Background(), test.args, &out, &diagnostic); err != nil || !strings.Contains(out.String(), test.content) {
+			t.Fatalf("%v: %s, %v", test.args, &out, err)
+		}
+	}
+	if err := os.RemoveAll(".inode/plugins/tiny"); err != nil {
+		t.Fatal(err)
+	}
+	var out, diagnostic bytes.Buffer
+	if err := command(context.Background(), []string{"plugins"}, &out, &diagnostic); err != nil || !strings.Contains(out.String(), "tiny\t1\tmissing\ttiny_plugin") {
+		t.Fatalf("missing: %s, %v", &out, err)
+	}
+	if err := command(context.Background(), []string{"show", "tiny.greet"}, &out, &diagnostic); err == nil || !strings.Contains(err.Error(), "inode add tiny_plugin") {
+		t.Fatalf("missing diagnosis: %v", err)
+	}
+	if err := command(context.Background(), []string{"remove", "tiny"}, &out, &diagnostic); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := command(context.Background(), []string{"plugins"}, &out, &diagnostic); err != nil || out.Len() != 0 {
+		t.Fatalf("removed: %s, %v", &out, err)
 	}
 }

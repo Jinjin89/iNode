@@ -103,7 +103,7 @@ One backend runs per project folder. The browser frontend and the command line a
 
 ## Plugins
 
-A plugin is a folder with a manifest (name, version, what it requires and what it accesses) and nodes. The contract:
+A plugin is a folder with a manifest (name, version, a description, what it says it accesses, and an optional setup command that prepares its own environment) and nodes. The contract:
 
 - **describe** returns the descriptions of its nodes and trigger kinds.
 - **run(node, inputs)** returns outputs or an error, with optional progress messages for display.
@@ -113,7 +113,7 @@ A plugin is a folder with a manifest (name, version, what it requires and what i
 The simplest node is a description file plus any program that reads its inputs as JSON and prints its outputs as JSON (see "Writing a node"). Plugins that keep models loaded or call other nodes run as a long-lived process and must accept new runs while waiting on a call.
 
 - **Discover:** an index that is only a list of names and URLs; no hosted service is required.
-- **Install:** always an explicit action, from a name, a git URL or a local path, after showing what the plugin says it accesses. A plugin is trusted code; nothing is enforced. Each plugin gets its own process and environment, so plugins cannot break each other's dependencies.
+- **Install:** always an explicit action, from a name, a git URL or a local path, after showing what the plugin says it accesses. A plugin is trusted code; nothing is enforced. Adding a plugin again replaces it. Each plugin gets its own process and environment, so plugins cannot break each other's dependencies.
 - **Use:** nodes appear as `plugin.node`. A project lists the plugins and versions it uses. Opening a project reports what is missing; it never installs by itself.
 
 **Adapters**, in order of value:
