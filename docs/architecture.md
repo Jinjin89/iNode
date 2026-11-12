@@ -2,7 +2,7 @@
 
 How the model in `design.md` is built. This document follows the model and never the other way round: it may only use concepts defined there (node, run, trigger, plugin). If something here would require the user to learn a new idea, either `design.md` is changed on purpose or this document is simplified.
 
-**Built so far:** the core (catalog, checker, runner, run records), boxes with the control nodes `map`, `choose`, `repeat`, `retry` and `try`, a few built-in nodes, nodes that are programs, plugins installed from a folder or a git repository, the long-running backend with its interface, the command line as a client of it, and the frontend's Canvas and Runs screens (editing, saving, checking and running a workflow, and viewing past runs). Not built yet: building steps inside a box on the canvas, run again and run from here, the When, Plugins and Secrets screens, triggers, secrets, long-lived plugin processes, `agent`, plugin search.
+**Built so far:** the core (catalog, checker, runner, run records), boxes with the control nodes `map`, `choose`, `repeat`, `retry` and `try`, a few built-in nodes, nodes that are programs, plugins installed from a folder or a git repository, the long-running backend with its interface, the command line as a client of it, and the frontend's Canvas, Runs and Plugins screens (editing, saving, checking and running a workflow, building steps inside a box, viewing past runs, run again). Not built yet: run from here, "move into box", the When and Secrets screens, triggers, secrets, long-lived plugin processes, `agent`, plugin search.
 
 ## Shape
 
@@ -62,8 +62,8 @@ The frontend draws what the backend says and sends back what the user did.
 
 Five screens:
 
-- **Canvas.** Node list on the side; steps with their inputs and outputs; lines for references and a different line for `after`. A `node` input is a box that holds a saved node or steps built inside it. A value entering a box from outside is drawn crossing the box edge once. "Move into box" is offered for a step when the checker confirms that everything using it (references, captured references, `after`, workflow outputs) stays valid. Unchecked connections are marked. Clicking a step shows its fields, and after a run what it received and returned. A step that called other nodes opens into its child runs.
-- **Runs.** Every run, newest first, with what started it. Opening one shows the canvas as it was, with results. Run again and Run from here are offered here; Run from here shows the selected part and the copied values before starting.
+- **Canvas.** Node list on the side; steps with their inputs and outputs; lines for references and a different line for `after`. A `node` input is a box that holds a saved node or steps built inside it; a box with steps opens into the same canvas, full size, with a way back. A value entering a box from outside is drawn crossing the box edge once. "Move into box" is offered for a step when the checker confirms that everything using it (references, captured references, `after`, workflow outputs) stays valid. Unchecked connections are marked. Clicking a step shows its fields, and after a run what it received and returned. A step that called other nodes opens into its child runs.
+- **Runs.** Every run, newest first, with what started it. Opening one shows the canvas as it was, with results. Run again and Run from here are offered here. Run again starts a fresh run with the same inputs: of the node as it is now, or, when the run was of a workflow with unsaved changes, of that run's own snapshot. Run from here shows the selected part and the copied values before starting.
 - **When.** Triggers, each with an on/off switch, its current run, the number of waiting events, its last run and its last failure.
 - **Plugins.** Search, install, remove; what a project is missing, with what each plugin says it accesses.
 - **Secrets.** Add and replace by name. Values are never shown again.
@@ -78,7 +78,7 @@ A thin client of the same interface.
 |---|---|
 | `inode run <node> key=value` | starts a run and prints its outputs |
 | `inode nodes`, `inode show <node>` | lists and describes nodes |
-| `inode runs`, `inode runs show/follow/stop <id>` | lists, shows, follows and stops runs |
+| `inode runs`, `inode runs show/follow/stop/again <id>` | lists, shows, follows, stops and repeats runs |
 | `inode trigger add/list/on/off` | manages triggers |
 | `inode search`, `inode add <plugin>` | finds and installs plugins |
 | `inode start`, `inode stop` | starts the backend and opens the frontend; stops the backend |

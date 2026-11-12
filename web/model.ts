@@ -4,12 +4,13 @@ export type Definition = string | Workflow;
 export type Step = { use: Definition; in?: Values; after?: string[] };
 export type Workflow = { doc?: string; inputs?: Record<string, Port>; steps?: Record<string, Step>; outputs?: Values; view?: Values };
 export type Description = { name?: string; doc?: string; inputs?: Record<string, Port>; outputs?: Record<string, Port>; workflow?: Workflow; version?: string };
-export type Run = { id?: string; node: string; state: string; inputs: Values; outputs: Values; steps?: Record<string, Run>; workflow?: Workflow; error?: string };
+export type Run = { id?: string; node: string; unsaved?: boolean; state: string; inputs: Values; outputs: Values; steps?: Record<string, Run>; workflow?: Workflow; error?: string };
 export type Problem = { step: string; input: string; message: string };
 export type Reference = { step: string; input: string; from: string[]; path: Path; bad?: boolean; unchecked?: boolean };
 export type Report = { problems: Problem[]; unchecked: Problem[]; references: Reference[]; nodes: Record<string, Description> };
 export const emptyReport: Report = { problems: [], unchecked: [], references: [], nodes: {} };
 export type Path = (string | number)[];
+export const content = (workflow: Workflow | null): string => JSON.stringify(workflow && { ...workflow, view: undefined });
 
 export const type = (port?: Port): string => typeof port === 'string' ? port : port?.type || 'any';
 export const box = (port?: Port): boolean => type(port).startsWith('node(');

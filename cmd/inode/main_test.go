@@ -117,6 +117,14 @@ func TestCommands(t *testing.T) {
 	if err := invokeCLI(context.Background(), []string{"runs", "show", id}, &out, &diagnostic); err != nil || !strings.Contains(out.String(), id) {
 		t.Fatalf("show run: %s, %v", &out, err)
 	}
+	out.Reset()
+	if err := invokeCLI(context.Background(), []string{"runs", "again", id}, &out, &diagnostic); err != nil {
+		t.Fatal(err)
+	}
+	var next string
+	if err := json.Unmarshal(out.Bytes(), &next); err != nil || next == "" || next == id {
+		t.Fatalf("run again: %s, %v", &out, err)
+	}
 }
 
 func TestPluginCommands(t *testing.T) {

@@ -17,7 +17,7 @@ import (
 	"inode"
 )
 
-const usage = "usage: inode run <node> key=value ... | nodes | show <node> | check <workflow or JSON> | save <workflow> <version> <JSON> | runs [show|stop|follow <id>] | add <path or git URL> | remove <plugin> | plugins | start | stop | help | version"
+const usage = "usage: inode run <node> key=value ... | nodes | show <node> | check <workflow or JSON> | save <workflow> <version> <JSON> | runs [show|stop|follow|again <id>] | add <path or git URL> | remove <plugin> | plugins | start | stop | help | version"
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

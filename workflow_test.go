@@ -161,13 +161,59 @@ func TestCanvasRunNames(t *testing.T) {
 		if want == "" {
 			want = "Unsaved workflow"
 		}
-		if run.Node != want || run.State != "done" || run.Outputs["text"] != "old" || run.Steps["read"].Node != "base" {
+		if run.Node != want || !run.Unsaved || run.State != "done" || run.Outputs["text"] != "old" || run.Steps["read"].Node != "base" {
 			t.Fatalf("run: %+v", run)
 		}
 		var rows []Record
 		json.Unmarshal(request(t, client, "runs")[0], &rows)
 		if rows[0].Node != want {
 			t.Fatalf("listing: %+v", rows)
+		}
+	}
+}
+
+func TestRunAgain(t *testing.T) {
+	original := "inputs: {text: text}\noutputs: {text: =inputs.text}"
+	p := fileProject(t, map[string]string{"word.flow": original})
+	client := runningBackend(t, p.dir)
+	read := func(id string) Record {
+		t.Helper()
+		frames := request(t, client, "runs follow", id)
+		var record Record
+		if err := json.Unmarshal(frames[len(frames)-1], &record); err != nil {
+			t.Fatal(err)
+		}
+		return record
+	}
+	for _, unsaved := range []bool{false, true} {
+		writeFiles(t, p.dir, map[string]string{"word.flow": original})
+		var definition any = "word"
+		if unsaved {
+			definition = p.nodes["word"].Workflow
+		}
+		var id, next string
+		json.Unmarshal(request(t, client, "run", definition, Values{"text": "hi"}, "word")[0], &id)
+		first := read(id)
+		writeFiles(t, p.dir, map[string]string{"word.flow": "inputs: {text: text}\nsteps: {u: {use: text.upper, in: {text: =inputs.text}}}\noutputs: {text: =u.text}"})
+		json.Unmarshal(request(t, client, "runs again", id)[0], &next)
+		again := read(next)
+		want := "HI"
+		if unsaved {
+			want = "hi"
+		}
+		if again.ID == first.ID || again.Node != "word" || again.Unsaved != unsaved || again.State != "done" || again.Inputs["text"] != "hi" || again.Outputs["text"] != want {
+			t.Fatalf("again: %+v", again)
+		}
+		if err := os.Remove(filepath.Join(p.dir, "word.flow")); err != nil {
+			t.Fatal(err)
+		}
+		if unsaved {
+			json.Unmarshal(request(t, client, "runs again", id)[0], &next)
+			if run := read(next); run.Outputs["text"] != "hi" || !run.Unsaved {
+				t.Fatalf("unsaved snapshot after removal: %+v", run)
+			}
+		} else if err := client.Call(t.Context(), "runs again", []any{id}, func(json.RawMessage) error { return nil }); err == nil || !strings.Contains(err.Error(), "unknown node") {
+			t.Fatalf("deleted saved workflow: %v", err)
 		}
 	}
 }

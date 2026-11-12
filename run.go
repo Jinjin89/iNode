@@ -18,6 +18,7 @@ import (
 type Record struct {
 	ID       string             `json:"id,omitempty"`
 	Node     string             `json:"node"`
+	Unsaved  bool               `json:"unsaved,omitempty"`
 	State    string             `json:"state"`
 	Started  time.Time          `json:"started,omitzero"`
 	Finished time.Time          `json:"finished,omitzero"`
@@ -107,6 +108,7 @@ func (p *Project) begin(use Definition, inputs Values, name string) (*execution,
 	step.In = values.Values
 	record := newRecord(step.plan)
 	if use.Workflow != nil {
+		record.Unsaved = true
 		record.Node = name
 		if record.Node == "" {
 			record.Node = "Unsaved workflow"

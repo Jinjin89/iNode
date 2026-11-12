@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { add, box, connect, emptyReport, graph, handle, parseHandle, layout, reference, rename, runWorkflow, set, type, type Workflow, type Description, type Reference } from './model';
+import { add, box, connect, content, emptyReport, graph, handle, parseHandle, layout, reference, rename, runWorkflow, set, type, type Workflow, type Description, type Reference } from './model';
 
 const catalog: Description[] = [
   { name: 'text.upper', inputs: { text: 'text' }, outputs: { text: 'text' } },
@@ -18,6 +18,15 @@ const refs: Reference[] = [
 const report = { ...emptyReport, references: refs };
 
 describe('document edits', () => {
+  it('ignores only root view for checking and choosing a saved definition', () => {
+    const moved = set(tiny, ['view', 'positions', handle(['steps', 'a'])], { x: 2, y: 3 });
+    expect(content(moved)).toBe(content(tiny));
+    expect(JSON.stringify(moved)).not.toBe(JSON.stringify(tiny));
+    const inline = set(tiny, ['steps', 'm'], { use: 'map', in: { do: { use: tiny } } });
+    expect(content(set(inline, ['steps', 'm', 'in', 'do', 'use', 'view'], { x: 2 }))).not.toBe(content(inline));
+    const literal = set(tiny, ['steps', 'a', 'in', 'data'], { view: 1 });
+    expect(content(set(literal, ['steps', 'a', 'in', 'data', 'view'], 2))).not.toBe(content(literal));
+  });
   it('adds and deletes a step without repairing dangling references', () => {
     const added = add(tiny, 'text.upper');
     expect(added.steps?.step1).toEqual({ use: 'text.upper' });

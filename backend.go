@@ -204,6 +204,18 @@ func (b *backend) startRun(p *Project, use Definition, inputs Values, name strin
 	return e.root.ID, nil
 }
 
+func (b *backend) again(p *Project, id string) (string, error) {
+	record, err := p.ShowRun(id)
+	if err != nil {
+		return "", err
+	}
+	use := Definition{Name: record.Node}
+	if record.Unsaved {
+		use = Definition{Workflow: record.Workflow}
+	}
+	return b.startRun(p, use, record.Inputs, record.Node)
+}
+
 func (b *backend) stopRun(p *Project, id string) error {
 	b.mu.Lock()
 	run := b.active[id]

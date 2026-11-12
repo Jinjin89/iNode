@@ -21,6 +21,7 @@ var Operations = map[string]operation{
 	"run":         {call: (*backend).startRun},
 	"runs":        {call: (*Project).Runs},
 	"runs show":   {call: (*Project).ShowRun},
+	"runs again":  {call: (*backend).again},
 	"runs stop":   {call: (*backend).stopRun},
 	"runs follow": {call: (*backend).followRun},
 	"add":         {call: (*Project).Add, write: true},

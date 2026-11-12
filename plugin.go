@@ -36,7 +36,7 @@ func (p *Project) pluginDir(name string) string {
 }
 
 func (p *Project) loadPlugins() error {
-	p.plugins = nil
+	p.plugins = []Plugin{}
 	err := readYAML(filepath.Join(p.dir, "plugins"), &p.plugins)
 	if os.IsNotExist(err) {
 		return nil
@@ -58,6 +58,7 @@ func (p *Project) loadPlugins() error {
 		p.plugins[i].State = "missing"
 		if err == nil && installed.Name == plugin.Name && installed.Version == plugin.Version {
 			p.plugins[i].State = "installed"
+			p.plugins[i].Doc, p.plugins[i].Accesses = installed.Doc, installed.Accesses
 			if err := p.loadNodes(filepath.Join(p.pluginDir(plugin.Name), "nodes"), plugin.Name+"."); err != nil {
 				return err
 			}

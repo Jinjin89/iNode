@@ -82,7 +82,12 @@ nav { display: flex; gap: 8px; }
 .box-title { color: #806195; font-weight: 650; margin-bottom: 8px; }
 .box-title .clear { float: right; padding: 0 6px; }
 .box .port { padding: 8px 0 0; }
-.box .nested { min-width: 0; }
+.open-box { width: 100%; margin-top: 10px; }
+.box-editor { display: flex; flex-direction: column; width: calc(100vw - 48px); height: calc(100vh - 48px); background: white; border-radius: 10px; overflow: hidden; }
+.box-editor .workspace { flex: 1; min-height: 0; height: auto; }
+.box-editor .toolbar button { margin-left: auto; }
+.box-captures { padding: 10px 18px; max-height: 180px; overflow: auto; border-bottom: 1px solid #dfe3e8; }
+.box-captures .port { display: inline-block; width: 240px; vertical-align: top; }
 .problem { color: #b63d35; white-space: pre-wrap; font-size: 12px; }
 .port .problem { margin-bottom: 0; }
 .unchecked { color: #9a721b; font-size: 12px; }
@@ -100,7 +105,9 @@ nav { display: flex; gap: 8px; }
 .state.done { color: #327354; background: #e5f3eb; }
 .state.failed, .state.interrupted { color: #b63d35; background: #ffebe7; }
 .state.running { color: #946617; background: #fff2d6; }
-.runs { padding: 32px; max-width: 1200px; margin: auto; }
+.runs, .plugins { padding: 32px; max-width: 1200px; margin: auto; }
+.plugins .row, .manifest { margin-bottom: 20px; }
+.manifest { padding: 16px; background: white; border: 1px solid #dfe3e8; }
 table { width: 100%; border-collapse: collapse; background: white; border: 1px solid #dfe3e8; }
 th, td { text-align: left; padding: 13px 16px; border-bottom: 1px solid #e3e7ec; }
 th { font-size: 12px; color: #737e8d; }

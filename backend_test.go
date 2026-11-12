@@ -137,6 +137,9 @@ func TestBackendOperations(t *testing.T) {
 	if err := json.Unmarshal(request(t, client, "plugins")[0], &plugins); err != nil || len(plugins) != 1 || plugins[0].State != "installed" {
 		t.Fatalf("plugins: %+v, %v", plugins, err)
 	}
+	if plugins[0].Doc != "Add a short greeting" || !slices.Equal(plugins[0].Accesses, []string{"Reads and writes its own greeting file."}) {
+		t.Fatalf("plugin description missing from list: %+v", plugins[0])
+	}
 	request(t, client, "remove", "tiny")
 	if data := string(request(t, client, "plugins")[0]); data != "null" && data != "[]" {
 		t.Fatal(data)
@@ -146,7 +149,7 @@ func TestBackendOperations(t *testing.T) {
 		args []any
 	}{
 		{"absent", nil}, {"show", nil}, {"show", []any{2}}, {"run", []any{"upper", Values{"extra": 1}, ""}},
-		{"runs show", []any{"absent"}}, {"runs stop", []any{"absent"}}, {"runs follow", []any{"absent"}},
+		{"runs show", []any{"absent"}}, {"runs stop", []any{"absent"}}, {"runs follow", []any{"absent"}}, {"runs again", []any{"absent"}},
 	} {
 		if err := client.Call(context.Background(), test.op, test.args, func(json.RawMessage) error { return nil }); err == nil {
 			t.Fatalf("invalid request succeeded: %+v", test)

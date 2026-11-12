@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useId, useState } from 'react';
-import { Background, Controls, Handle, Position, ReactFlow, ReactFlowProvider, useUpdateNodeInternals } from '@xyflow/react';
-import { graph, handle, parseHandle, problems, rename, runWorkflow, set, type, box, inputs as nodeInputs, reference, connect, emptyReport } from './model';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { Background, Controls, Handle, Position, ReactFlow, ReactFlowProvider, getNodesBounds, getViewportForBounds, useStore, useReactFlow, useUpdateNodeInternals } from '@xyflow/react';
+import { add, content, graph, handle, parseHandle, problems, rename, runWorkflow, set, type, box, inputs as nodeInputs, reference, connect, emptyReport } from './model';
 import { call, op } from './client';
 
 export function useReply(operation, args, receive, fail) {
@@ -17,12 +18,25 @@ export function useReply(operation, args, receive, fail) {
   }, [operation, ...args, receive, fail]);
 }
 
-export function Field({ port = 'any', value, onChange, catalog = [], path = [], socket, descriptions = {} }) {
+export function NodeList({ catalog, workflow, onEdit }) {
+  const [search, setSearch] = useState('');
+  return <aside className="catalog"><h2>Nodes</h2><input aria-label="Find a node" placeholder="Find a node…" value={search} onChange={event => setSearch(event.target.value)} />
+    <p>Choose a node to add a step.</p>
+    <div className="node-list">{catalog.filter(node => (node.name + ' ' + node.doc).toLowerCase().includes(search.toLowerCase())).map(node =>
+      <button type="button" disabled={!onEdit} key={node.name} onClick={() => onEdit(add(workflow, node.name))}>
+        <strong>{node.name}</strong><small>{node.doc}</small>
+      </button>)}
+    </div>
+  </aside>;
+}
+
+export function Field({ port = 'any', value, onChange, catalog = [], path = [], socket, descriptions = {}, issues = [] }) {
   const kind = type(port);
   const fallback = typeof port === 'object' ? port.default : undefined;
   const shownValue = value === undefined ? fallback : value;
   const [draft, setDraft] = useState('');
   const [error, setError] = useState('');
+  const [opened, open] = useState(false);
   useEffect(() => { setDraft(shownValue === undefined ? '' : JSON.stringify(shownValue, null, 2)); setError(''); }, [shownValue]);
   const commit = () => {
     try { onChange(draft === '' ? undefined : JSON.parse(draft)); setError(''); }
@@ -34,18 +48,30 @@ export function Field({ port = 'any', value, onChange, catalog = [], path = [], 
   if (box(port)) {
     const step = typeof shownValue === 'string' ? { use: shownValue } : shownValue;
     const inline = step?.use && typeof step.use === 'object';
+    const edit = onChange && (next => onChange(set(step, ['use'], next)));
+    const fields = socket => Object.entries({ ...nodeInputs(step.use, step.in, catalog), ...descriptions[JSON.stringify(path)]?.inputs }).map(([name, port]) => <label className="port" key={name}>
+      <span>{name}<small>{type(port)}</small></span>
+      <Field port={port} value={step.in?.[name]} onChange={onChange && (next => onChange(set(step, ['in', name], next)))}
+        catalog={catalog} path={[...path, 'in', name]} socket={socket} descriptions={descriptions} />
+    </label>);
     return <div className="box nodrag nowheel">{handle}<div className="box-title">Box {clear}</div>
-      <select aria-label="Node in box" disabled={!onChange} value={typeof step?.use === 'string' ? step.use : ''} onChange={event => onChange({ use: event.target.value, in: {} })}>
-        <option value="">{inline ? 'Inline workflow' : 'Choose a node'}</option>{catalog.map(node => <option key={node.name} value={node.name}>{node.name}</option>)}
+      <select aria-label="Node in box" disabled={!onChange} value={inline ? 'inline' : step?.use ? 'node:' + step.use : ''} onChange={event => onChange({
+        use: event.target.value === 'inline' ? { inputs: {}, steps: {}, outputs: {} } : event.target.value.slice(5), in: {},
+      })}>
+        <option value="" disabled>Choose a node</option><option value="inline">Inline workflow</option>{catalog.map(node => <option key={node.name} value={'node:' + node.name}>{node.name}</option>)}
       </select>
-      {step?.use && <div className="box-inputs">
-        {Object.entries({ ...nodeInputs(step.use, step.in, catalog), ...descriptions[JSON.stringify(path)]?.inputs }).map(([name, port]) => <label className="port" key={name}>
-          <span>{name}<small>{type(port)}</small></span>
-          <Field port={port} value={step.in?.[name]} onChange={onChange && (next => onChange(set(step, ['in', name], next)))}
-            catalog={catalog} path={[...path, 'in', name]} socket={socket} descriptions={descriptions} />
-        </label>)}
-      </div>}
-      {inline && <Canvas workflow={step.use} catalog={catalog} nested />}
+      {step?.use && <div className="box-inputs">{fields(socket)}</div>}
+      {inline && <button type="button" className="open-box" onClick={() => open(true)}>Open box · Steps: {Object.keys(step.use.steps || {}).length}</button>}
+      {inline && opened && createPortal(<div className="modal-backdrop nodrag nopan nowheel">
+        <section className="box-editor" role="dialog" aria-label="Box editor">
+          <div className="toolbar"><strong>Box</strong><span>Steps: {Object.keys(step.use.steps || {}).length}</span><button type="button" onClick={() => open(false)}>Back</button></div>
+          {issues.length > 0 && <div className="report"><Messages items={issues} /></div>}
+          {Object.keys(step.use.inputs || {}).length > 0 && <details className="box-captures"><summary>Box inputs</summary>{fields()}</details>}
+          <div className="workspace"><NodeList catalog={catalog} workflow={step.use} onEdit={edit} />
+            <section className="work"><Canvas workflow={step.use} catalog={catalog} onEdit={edit} /></section>
+          </div>
+        </section>
+      </div>, document.body)}
       {!step?.use && onChange && <textarea aria-label="Box JSON" value={draft} onChange={event => setDraft(event.target.value)} onBlur={commit} />}
       {error && <p className="problem">{error}</p>}
     </div>;
@@ -82,7 +108,8 @@ function Step({ id, data }) {
     <Handle type="target" position={Position.Left} id={handle(path)} />
   </>;
   const source = path => <Handle type="source" position={Position.Right} id={handle(path)} />;
-  const field = (port, value, path) => <Field port={port} value={value} onChange={edit && (next => edit(set(workflow, path, next)))} catalog={catalog} path={path} socket={target} descriptions={report.nodes} />;
+  const field = (port, value, path) => <Field port={port} value={value} onChange={edit && (next => edit(set(workflow, path, next)))} catalog={catalog} path={path} socket={target} descriptions={report.nodes}
+    issues={problems(report, where, path.slice(kind === 'step' ? 3 : 0).join('.'))} />;
   const issues = kind === 'step' ? problems(report, where) : Object.keys(ports).flatMap(key => problems(report, scope, kind === 'inputs' ? key : 'outputs.' + key));
   return <article className={'step ' + (record?.state || '') + (issues.length ? ' has-problem' : '')}>
     <header><strong>{kind === 'step' ? name : kind === 'inputs' ? 'Inputs' : 'Outputs'}</strong>{record && <span className="state">{record.state}</span>}</header>
@@ -110,6 +137,25 @@ function Step({ id, data }) {
 }
 const nodeTypes = { step: Step };
 
+function Fit({ ready, report, workflow }) {
+  const fitted = useRef('');
+  const frame = useStore(state => {
+    const size = state.width + ':' + state.height;
+    if (!ready || !state.width || !state.height || fitted.current === size) return null;
+    const measured = [...state.nodeLookup.values()];
+    if (!measured.length || measured.some(node => node.data.report !== report || node.data.workflow !== workflow || !node.measured?.width || !node.measured?.height)) return null;
+    return { size, viewport: getViewportForBounds(getNodesBounds(measured), state.width, state.height, state.minZoom, 1, 0.1) };
+  });
+  const { setViewport } = useReactFlow();
+  useEffect(() => {
+    if (frame && fitted.current !== frame.size) {
+      fitted.current = frame.size;
+      setViewport(frame.viewport);
+    }
+  }, [frame, setViewport]);
+  return null;
+}
+
 function Named({ name, onChange, names = [], label = 'Name' }) {
   const [draft, change] = useState(name);
   useEffect(() => change(name), [name]);
@@ -127,10 +173,12 @@ export function Canvas({ workflow, catalog, onEdit, record, scope = '(inline)', 
   const [selected, select] = useState('');
   const [checked, setChecked] = useState({ document: null, report: emptyReport });
   const [error, setError] = useState('');
-  const receive = useCallback(report => setChecked({ document: workflow, report }), [workflow]);
-  useReply(op.check, [workflow], receive, setError);
+  const key = content(workflow);
+  const definition = useMemo(() => JSON.parse(key), [key]);
+  const receive = useCallback(report => setChecked({ document: key, report }), [key]);
+  useReply(op.check, [definition], receive, setError);
   const report = checked.report;
-  const fresh = checked.document === workflow;
+  const fresh = checked.document === key;
   const id = useId();
   const records = record?.workflow ? record.steps || {} : record ? { node: record } : {};
   const derived = graph(workflow, catalog, records, report, scope);
@@ -141,11 +189,11 @@ export function Canvas({ workflow, catalog, onEdit, record, scope = '(inline)', 
   const child = records[name];
   const boundary = selection.length === 1 ? selection[0] : '';
   const remove = () => { onEdit(set(workflow, ['steps', name], undefined)); select(''); };
-  return <ReactFlowProvider initialNodes={nodes} initialEdges={derived.edges} fitView>
+  return <ReactFlowProvider initialNodes={nodes} initialEdges={derived.edges}>
     {error && <p className="notice problem">{error}</p>}
     <div className={'canvas ' + (nested ? 'nested' : '')}>
       <div className="drawing">
-        <ReactFlow id={id} nodes={nodes} edges={derived.edges} nodeTypes={nodeTypes} fitView minZoom={0.15} maxZoom={1.5}
+        <ReactFlow id={id} nodes={nodes} edges={derived.edges} nodeTypes={nodeTypes} minZoom={0.15} maxZoom={1.5}
           nodesDraggable={!!onEdit} nodesConnectable={!!onEdit} deleteKeyCode={null}
           onNodeClick={(_, node) => select(node.id)} onPaneClick={() => select('')}
           onNodesChange={changes => {
@@ -155,7 +203,7 @@ export function Canvas({ workflow, catalog, onEdit, record, scope = '(inline)', 
           }}
           onConnect={edge => onEdit?.(connect(workflow, parseHandle(edge.sourceHandle), parseHandle(edge.targetHandle)))}
           onEdgeClick={(_, edge) => { if (onEdit) select(edge.id); }}>
-          <Background gap={22} size={1} /><Controls showInteractive={false} />
+          <Fit key={record?.state} ready={fresh} report={report} workflow={workflow} /><Background gap={22} size={1} /><Controls showInteractive={false} />
         </ReactFlow>
       </div>
       {selected && <aside className="inspector nowheel">
