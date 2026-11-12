@@ -3,6 +3,7 @@ package inode
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/url"
 	"os"
@@ -26,6 +27,36 @@ accesses: [Reads and writes its own greeting file.]
 setup: printf x >> setup_count; printf hi > nodes/greeting.txt
 `})
 	return dir
+}
+
+func TestInspectPlugin(t *testing.T) {
+	source := pluginFolder(t)
+	dir := t.TempDir()
+	client := runningBackend(t, dir)
+	var plugin Plugin
+	if err := json.Unmarshal(request(t, client, "plugins inspect", source)[0], &plugin); err != nil {
+		t.Fatal(err)
+	}
+	if plugin.Name != "tiny" || plugin.Version != "1" || plugin.Doc != "Add a short greeting" || len(plugin.Accesses) != 1 {
+		t.Fatalf("inspection: %+v", plugin)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "plugins")); !os.IsNotExist(err) {
+		t.Fatal("inspection changed the listing")
+	}
+	if _, err := os.Stat(filepath.Join(source, "setup_count")); !os.IsNotExist(err) {
+		t.Fatal("inspection ran setup")
+	}
+	p, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFiles(t, source, map[string]string{"plugin": "name: tiny\ndoc: hi"})
+	if _, err := p.InspectPlugin(context.Background(), source); err == nil || !strings.Contains(err.Error(), "version") {
+		t.Fatalf("invalid inspection: %v", err)
+	}
+	if entries, err := os.ReadDir(filepath.Join(dir, ".inode", "plugins")); err != nil || len(entries) != 0 {
+		t.Fatalf("inspection left a staged or installed plugin: %v, %v", entries, err)
+	}
 }
 
 func TestPluginFolder(t *testing.T) {

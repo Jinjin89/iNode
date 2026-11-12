@@ -82,15 +82,14 @@ func (p *Project) lookup(name string) Node {
 
 func (p *Project) Plugins() []Plugin { return p.plugins }
 
-func (p *Project) Add(ctx context.Context, source string, out io.Writer) error {
+func (p *Project) fetchPlugin(ctx context.Context, source string) (Plugin, string, error) {
 	if err := os.MkdirAll(p.pluginDir(""), 0700); err != nil {
-		return err
+		return Plugin{}, "", err
 	}
 	stage, err := os.MkdirTemp(p.pluginDir(""), ".add-")
 	if err != nil {
-		return err
+		return Plugin{}, "", err
 	}
-	defer os.RemoveAll(stage)
 	local := source
 	if !filepath.IsAbs(local) {
 		local = filepath.Join(p.dir, local)
@@ -111,20 +110,37 @@ func (p *Project) Add(ctx context.Context, source string, out io.Writer) error {
 			}
 		}
 	}
+	var plugin Plugin
+	if err == nil {
+		err = readYAML(filepath.Join(stage, "plugin"), &plugin)
+	}
+	if err == nil {
+		err = plugin.validate()
+	}
+	if err == nil && plugin.Doc == "" {
+		err = fmt.Errorf("plugin %q: supply doc", plugin.Name)
+	}
+	if err != nil {
+		os.RemoveAll(stage)
+	}
+	plugin.Source = source
+	return plugin, stage, err
+}
+
+func (p *Project) InspectPlugin(ctx context.Context, source string) (Plugin, error) {
+	plugin, stage, err := p.fetchPlugin(ctx, source)
+	if err == nil {
+		err = os.RemoveAll(stage)
+	}
+	return plugin, err
+}
+
+func (p *Project) Add(ctx context.Context, source string, out io.Writer) error {
+	plugin, stage, err := p.fetchPlugin(ctx, source)
 	if err != nil {
 		return err
 	}
-	var plugin Plugin
-	if err := readYAML(filepath.Join(stage, "plugin"), &plugin); err != nil {
-		return err
-	}
-	if err := plugin.validate(); err != nil {
-		return err
-	}
-	if plugin.Doc == "" {
-		return fmt.Errorf("plugin %q: supply doc", plugin.Name)
-	}
-	plugin.Source = source
+	defer os.RemoveAll(stage)
 	if _, err := fmt.Fprintf(out, "%s\t%s\n%s\nAccesses:\n", plugin.Name, plugin.Version, plugin.Doc); err != nil {
 		return err
 	}

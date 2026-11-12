@@ -17,7 +17,7 @@ The interface is grouped by what the user manages:
 | Workflows | open, save (a save based on an out-of-date copy is rejected), check, "what can connect here" |
 | Runs | start, stop, list, show, watch live, run again, run from here |
 | Triggers | add, remove, list, switch on or off, clear waiting events |
-| Plugins | search, list missing, install, remove |
+| Plugins | inspect a source, list missing, install, remove |
 | Secrets | set, list names, remove |
 
 ## Backend
@@ -66,10 +66,12 @@ The Guide panel stays beside the work and opens when a project has no runs. Its 
 Five screens:
 
 - **Canvas.** Node list on the side; steps with their inputs and outputs; lines for references and a different line for `after`. A `node` input is a box that holds a saved node or steps built inside it; a box with steps opens into the same canvas, full size, with a way back. A value entering a box from outside is drawn crossing the box edge once. "Move into box" is offered for a step when the checker confirms that everything using it (references, captured references, `after`, workflow outputs) stays valid. Unchecked connections are marked. Clicking a step shows its fields, and after a run what it received and returned. A step that called other nodes opens into its child runs.
-- **Runs.** Every run, newest first, with what started it. Opening one shows the canvas as it was, with results. Run again and Run from here are offered here. Run again starts a fresh run with the same inputs: of the node as it is now, or, when the run was of a workflow with unsaved changes, of that run's own snapshot. Run from here shows the selected part and the copied values, each with its source, before starting.
-- **When.** Triggers, each with an on/off switch, its current run, the number of waiting events, its last run and its last failure.
-- **Plugins.** Search, install, remove; what a project is missing, with what each plugin says it accesses.
-- **Secrets.** Add, replace and remove by name. Values are never shown again.
+- **Runs.** Every run, newest first, with what started it, filtered by node, state or trigger. Opening one shows the canvas as it was, with results. Run again and Run from here are offered here. Run again starts a fresh run with the same inputs: of the node as it is now, or, when the run was of a workflow with unsaved changes, of that run's own snapshot. Run from here shows the selected part and the copied values, each with its source, before starting.
+- **When.** Triggers read as “When this, run that”, with their settings and inputs. Each shows its on/off switch, current run, waiting-event count, last run and last failure; a link opens Runs filtered to it. The two halves of the add form use the same fields and show the checker’s problems beside them.
+- **Plugins.** Inspect a folder or git URL, read its name, version, description and accesses, then confirm installation. The list shows installed/missing state and catalog nodes; the install log stays until dismissed. Inspection does not retain a staged install or pin its source; installed details are compared with those confirmed and any difference in name, version or accesses is shown on the row.
+- **Secrets.** Store and remove by name; replacement is confirmed. Values are never shown again.
+
+One confirmation names the thing and the consequence before discarding edits, removing a trigger/plugin/secret or clearing waiting events. Progress disables only its own action or row.
 
 A field is chosen by the input's type: text box, number box, switch, list editor, file picker, secret picker, socket only (for live objects, which cannot be typed in), or box. Each described port carries its type as display text and as structure from the same type tree, so clients do not parse the notation.
 

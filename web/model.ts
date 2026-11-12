@@ -25,7 +25,7 @@ export const parseHandle = (id: string): Path => JSON.parse(decodeURIComponent(i
 export const copyText = (value: any): string => typeof value === 'string' ? value : JSON.stringify(value, null, 2) ?? '';
 export const textPreview = (text: string): string => text.split('\n').slice(0, 8).join('\n').slice(0, 400);
 export const canReference = (path: Path): boolean => path.length >= 2 && path.every(part => !String(part).includes('.'));
-export const filterRuns = (runs: Run[], node: string, state: string): Run[] => runs.filter(run => (!node || run.node === node) && (!state || run.state === state));
+export const filterRuns = (runs: Run[], node: string, state: string, trigger = ''): Run[] => runs.filter(run => (!node || run.node === node) && (!state || run.state === state) && (!trigger || run.trigger === trigger));
 
 export function runTrail(run: Run, path: string[]) {
   const trail = [{ run, label: run.node, path: [] as string[] }];

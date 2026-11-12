@@ -4,18 +4,20 @@ import { op } from './client';
 import { filterRuns } from './model';
 import { Duration } from './Value';
 
-export function Runs({ showRun, fail }) {
-  const [runs, setRuns] = useState([]), [node, setNode] = useState(''), [state, setState] = useState('');
+export function Runs({ showRun, fail, trigger = '' }) {
+  const [runs, setRuns] = useState([]), [node, setNode] = useState(''), [state, setState] = useState(''), [startedBy, setStartedBy] = useState(trigger);
   useReply(op.runs, [], setRuns, fail, 1000);
-  const rows = filterRuns(runs, node, state);
+  const rows = filterRuns(runs, node, state, startedBy);
   return <section className="runs"><h1>Runs</h1>
     {!runs.length && <p>Run a workflow on Canvas to see what each step received and returned.</p>}
     <div className="run-filters row"><label>Workflow<select aria-label="Filter by workflow" value={node} onChange={event => setNode(event.target.value)}>
       <option value="">All workflows and nodes</option>{[...new Set([node, ...runs.map(run => run.node)])].filter(Boolean).sort().map(name => <option key={name}>{name}</option>)}
     </select></label><label>State<select aria-label="Filter by state" value={state} onChange={event => setState(event.target.value)}>
       <option value="">All states</option>{[...new Set([state, ...runs.map(run => run.state)])].filter(Boolean).sort().map(name => <option key={name}>{name}</option>)}
+    </select></label><label>Trigger<select aria-label="Filter by trigger" value={startedBy} onChange={event => setStartedBy(event.target.value)}>
+      <option value="">All triggers and manual runs</option>{[...new Set([startedBy, ...runs.map(run => run.trigger)])].filter(Boolean).sort().map(name => <option key={name}>{name}</option>)}
     </select></label></div>
-    {!rows.length ? runs.length > 0 && <p>No runs match these filters.</p> : <table>
+    {!rows.length ? runs.length > 0 && <p>No runs match these filters.</p> : <div className="table-scroll"><table>
       <thead><tr><th>Node</th><th>State</th><th>Created</th><th>Duration</th><th>Started by</th><th>Run</th></tr></thead>
       <tbody>{rows.map(run => <tr key={run.id}>
         <td><button className="quiet" onClick={() => showRun(run.id)}>{run.node}</button>{run.unsaved && <small>Unsaved</small>}</td>
@@ -23,6 +25,6 @@ export function Runs({ showRun, fail }) {
         <td>{run.source ? <button className="quiet" onClick={() => showRun(run.source.run)}>{run.source.run} / {run.source.step}</button> : run.trigger || 'Manual'}</td>
         <td><button className="quiet" onClick={() => showRun(run.id)}>{run.id}</button></td>
       </tr>)}</tbody>
-    </table>}
+    </table></div>}
   </section>;
 }

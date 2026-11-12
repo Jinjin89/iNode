@@ -198,6 +198,10 @@ describe('running and values', () => {
     expect(filterRuns(runs, 'tiny', '')).toEqual(runs.slice(1));
     expect(filterRuns(runs, 'tiny', 'done')).toEqual([runs[1]]);
     expect(filterRuns(runs, '', 'failed')).toEqual([]);
+    const triggered = [{ ...runs[0], trigger: 'clock' }, { ...runs[1], trigger: 'clock' }, runs[2]];
+    expect(filterRuns(triggered, '', '', 'clock')).toEqual(triggered.slice(0, 2));
+    expect(filterRuns(triggered, 'tiny', 'done', 'clock')).toEqual([triggered[1]]);
+    expect(filterRuns(triggered, '', '', 'missing')).toEqual([]);
   });
 });
 
