@@ -192,5 +192,5 @@ func (p *Project) savePlugins(plugins []Plugin) error {
 	if err != nil {
 		return err
 	}
-	return writeFile(filepath.Join(p.dir, "plugins"), data, 0644)
+	return writeFile(filepath.Join(p.dir, "plugins"), data, 0644, false)
 }

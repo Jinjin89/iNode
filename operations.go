@@ -14,20 +14,26 @@ type operation struct {
 }
 
 var Operations = map[string]operation{
-	"nodes":       {call: (*Project).Nodes},
-	"show":        {call: (*Project).Describe},
-	"check":       {call: (*Project).Check},
-	"save":        {call: (*Project).Save, write: true},
-	"run":         {call: (*backend).startRun},
-	"runs":        {call: (*Project).Runs},
-	"runs show":   {call: (*Project).ShowRun},
-	"runs again":  {call: (*backend).again},
-	"runs stop":   {call: (*backend).stopRun},
-	"runs follow": {call: (*backend).followRun},
-	"add":         {call: (*Project).Add, write: true},
-	"remove":      {call: (*Project).Remove, write: true},
-	"plugins":     {call: (*Project).Plugins},
-	"stop":        {call: (*backend).stop},
+	"nodes":          {call: (*Project).Nodes},
+	"show":           {call: (*Project).Describe},
+	"check":          {call: (*Project).Check},
+	"save":           {call: (*Project).Save, write: true},
+	"run":            {call: (*backend).startRun},
+	"runs":           {call: (*Project).Runs},
+	"runs show":      {call: (*Project).ShowRun},
+	"runs again":     {call: (*backend).again},
+	"runs stop":      {call: (*backend).stopRun},
+	"runs follow":    {call: (*backend).followRun},
+	"add":            {call: (*Project).Add, write: true},
+	"remove":         {call: (*Project).Remove, write: true},
+	"plugins":        {call: (*Project).Plugins},
+	"stop":           {call: (*backend).stop},
+	"trigger add":    {call: (*backend).addTrigger, write: true},
+	"trigger list":   {call: (*backend).triggerList},
+	"trigger on":     {call: func(b *backend, p *Project, name string) error { return b.setTrigger(p, name, true) }},
+	"trigger off":    {call: func(b *backend, p *Project, name string) error { return b.setTrigger(p, name, false) }},
+	"trigger clear":  {call: (*backend).clearTrigger},
+	"trigger remove": {call: (*backend).removeTrigger, write: true},
 }
 
 type parameters struct {
@@ -86,12 +92,11 @@ func (p parameters) invoke(name string, args []json.RawMessage) error {
 	for i := range values {
 		t := fn.Type().In(i)
 		if t == reflect.TypeFor[*Project]() {
-			project, err := Open(p.backend.dir)
+			project, err := p.backend.project()
 			if err != nil {
 				return err
 			}
 			p.project = project
-			project.mu, project.publish = &p.backend.mu, p.backend.publish
 		}
 		value := p.value(t)
 		if !value.IsValid() {

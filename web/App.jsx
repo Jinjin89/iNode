@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Canvas, Field, NodeList, useReply } from './Canvas';
 import { call, op } from './client';
 import { content, runWorkflow, set, type } from './model';
+import { When } from './When';
 
 export function App() {
   const [catalog, setCatalog] = useState([]);
@@ -63,7 +64,7 @@ export function App() {
   const showRun = id => { setRecord(previous => previous?.id === id ? previous : null); setRunId(id); setScreen('Canvas'); };
   return <main>
     <header className="app-header"><a className="brand" href="#" onClick={event => event.preventDefault()}>iNode<span>Local workflows</span></a>
-      <nav>{['Canvas', 'Runs', 'Plugins'].map(name => <button key={name} className={screen === name ? 'active' : 'quiet'} onClick={() => {
+      <nav>{['Canvas', 'Runs', 'When', 'Plugins'].map(name => <button key={name} className={screen === name ? 'active' : 'quiet'} onClick={() => {
         setScreen(name);
         const listing = { Runs: [op.runs, setRuns], Plugins: [op.plugins, setPlugins] }[name];
         if (listing) perform(async () => { for await (const rows of call(listing[0])) listing[1](rows); });
@@ -106,14 +107,14 @@ export function App() {
       </section>
     </div> : screen === 'Runs' ? <section className="runs">
       <h1>Runs</h1>{runs.length === 0 ? <p>No runs yet.</p> : <table>
-        <thead><tr><th>Node</th><th>State</th><th>Started</th><th>Run</th></tr></thead>
+        <thead><tr><th>Node</th><th>State</th><th>Created</th><th>Started by</th><th>Run</th></tr></thead>
         <tbody>{runs.map(run => <tr key={run.id}>
           <td><button className="quiet" onClick={() => showRun(run.id)}>{run.node}</button></td>
-          <td><span className={'state ' + run.state}>{run.state}</span></td><td>{new Date(run.started).toLocaleString()}</td>
+          <td><span className={'state ' + run.state}>{run.state}</span></td><td>{new Date(run.created || run.started).toLocaleString()}</td><td>{run.trigger || '—'}</td>
           <td><button className="quiet" onClick={() => showRun(run.id)}>{run.id}</button></td>
         </tr>)}</tbody>
       </table>}
-    </section> : <section className="plugins">
+    </section> : screen === 'When' ? <When catalog={catalog} perform={perform} busy={busy} fail={setError} showRun={showRun} /> : <section className="plugins">
       <h1>Plugins</h1>
       <form className="row" onSubmit={event => { event.preventDefault(); changePlugin(op.add, source); }}>
         <input aria-label="Plugin path or git URL" placeholder="Path or git URL" value={source} onChange={event => setSource(event.target.value)} required />

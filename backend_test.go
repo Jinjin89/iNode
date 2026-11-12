@@ -18,12 +18,17 @@ import (
 )
 
 func runningBackend(t *testing.T, dir string) *Client {
+	client, _ := startBackend(t, dir)
+	return client
+}
+
+func startBackend(t *testing.T, dir string) (*Client, func()) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	var serveErr error
 	go func() { serveErr = Serve(ctx, dir); close(done) }()
-	t.Cleanup(func() {
+	stopBackend := func() {
 		stopCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
 		defer stop()
 		if client, _, err := Connect(stopCtx, dir, false); err == nil {
@@ -38,13 +43,14 @@ func runningBackend(t *testing.T, dir string) *Client {
 		case <-stopCtx.Done():
 			t.Error("backend did not stop")
 		}
-	})
+	}
+	t.Cleanup(stopBackend)
 	deadline := time.After(5 * time.Second)
 	tick := time.NewTicker(5 * time.Millisecond)
 	defer tick.Stop()
 	for {
 		if client, _, err := Connect(ctx, dir, false); err == nil {
-			return client
+			return client, stopBackend
 		}
 		select {
 		case <-done:
@@ -311,10 +317,10 @@ func TestStartupInterruptsRecords(t *testing.T) {
 	run := &Record{ID: "old", Node: "file.write", State: "running", Inputs: Values{"path": "marker", "text": "hi"}, Steps: map[string]*Record{
 		"running": {Node: "text.upper", State: "running"}, "done": {Node: "text.upper", State: "done", Outputs: Values{"text": "HI"}}, "waiting": {Node: "text.upper", State: "waiting"},
 	}}
-	if err := p.save(run); err != nil {
+	if err := p.save(run, true); err != nil {
 		t.Fatal(err)
 	}
-	pending, err := p.begin(Definition{Name: "file.write"}, Values{"path": "marker", "text": "hi"}, "")
+	pending, err := p.begin(newRun(Definition{Name: "file.write"}, Values{"path": "marker", "text": "hi"}, ""))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -45,7 +45,7 @@ func (p *Project) Save(name, basedOn string, value json.RawMessage) (Node, error
 	if current != basedOn {
 		return Node{}, fmt.Errorf("workflow %q changed on disk; open it again before saving", name)
 	}
-	if err := writeFile(path, data, 0644); err != nil {
+	if err := writeFile(path, data, 0644, false); err != nil {
 		return Node{}, err
 	}
 	if err := p.load(); err != nil {

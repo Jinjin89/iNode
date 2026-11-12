@@ -170,6 +170,35 @@ func TestPluginCommands(t *testing.T) {
 	}
 }
 
+func TestTriggerCommands(t *testing.T) {
+	cliProject(t)
+	if err := os.WriteFile("upper.flow", []byte("inputs: {text: text}\nsteps: {u: {use: text.upper, in: {text: =inputs.text}}}\noutputs: {text: =u.text}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var out, diagnostic bytes.Buffer
+	if err := invokeCLI(t.Context(), []string{"trigger", "add", "schedule.every", "interval=0.002", "run=upper", "text=hi"}, &out, &diagnostic); err != nil {
+		t.Fatal(err)
+	}
+	var name string
+	if err := json.Unmarshal(out.Bytes(), &name); err != nil || name != "schedule.every-1" {
+		t.Fatalf("trigger name: %s, %v", &out, err)
+	}
+	for _, args := range [][]string{{"trigger", "list"}, {"trigger", "on", name}, {"trigger", "off", name}, {"trigger", "clear", name}, {"trigger", "remove", name}} {
+		out.Reset()
+		diagnostic.Reset()
+		if err := invokeCLI(t.Context(), args, &out, &diagnostic); err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+		if args[1] == "list" && !strings.Contains(out.String(), name+"\tschedule.every interval=0.002 -> upper\toff\t") {
+			t.Fatalf("trigger list: %s", &out)
+		}
+	}
+	out.Reset()
+	if err := invokeCLI(t.Context(), []string{"trigger", "list"}, &out, &diagnostic); err != nil || out.Len() != 0 {
+		t.Fatalf("trigger remove: %s, %v", &out, err)
+	}
+}
+
 func TestBackendLifecycleCommands(t *testing.T) {
 	cliProject(t)
 	for _, args := range [][]string{nil, {"help"}, {"version"}, {"unknown"}, {"nodes", "extra"}, {"stop"}} {

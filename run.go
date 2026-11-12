@@ -20,6 +20,8 @@ type Record struct {
 	Node     string             `json:"node"`
 	Unsaved  bool               `json:"unsaved,omitempty"`
 	State    string             `json:"state"`
+	Trigger  string             `json:"trigger,omitempty"`
+	Created  time.Time          `json:"created,omitzero"`
 	Started  time.Time          `json:"started,omitzero"`
 	Finished time.Time          `json:"finished,omitzero"`
 	Inputs   Values             `json:"inputs"`
@@ -27,6 +29,20 @@ type Record struct {
 	Error    string             `json:"error,omitempty"`
 	Steps    map[string]*Record `json:"steps,omitempty"`
 	Workflow *Workflow          `json:"workflow,omitempty"`
+}
+
+func (r Record) pending() bool {
+	return r.Trigger != "" && r.State == "waiting" && r.Started.IsZero()
+}
+
+func newRun(use Definition, inputs Values, name string) *Record {
+	if use.Workflow == nil {
+		name = strings.TrimSuffix(use.Name, ".flow")
+	} else if name == "" {
+		name = "Unsaved workflow"
+	}
+	return &Record{ID: rand.Text(), Node: name, Unsaved: use.Workflow != nil, Workflow: use.Workflow,
+		State: "waiting", Created: time.Now().UTC(), Inputs: inputs}
 }
 
 func (r *Record) fail(err error) {
@@ -62,14 +78,14 @@ type execution struct {
 	step    Step
 }
 
-func (e *execution) update(record *Record, err error, change func()) error {
+func (e *execution) update(record *Record, err error, durable bool, change func()) error {
 	e.project.mu.Lock()
 	defer e.project.mu.Unlock()
 	change()
 	if err != nil {
 		record.fail(err)
 	}
-	if saveErr := e.project.save(e.root); saveErr != nil {
+	if saveErr := e.project.save(e.root, durable); saveErr != nil {
 		record.fail(saveErr)
 		err = saveErr
 	}
@@ -80,7 +96,7 @@ func (e *execution) update(record *Record, err error, change func()) error {
 }
 
 func (p *Project) Start(ctx context.Context, name string, inputs Values) (*Record, error) {
-	e, err := p.begin(Definition{Name: name}, inputs, "")
+	e, err := p.begin(newRun(Definition{Name: name}, inputs, ""))
 	if e == nil {
 		return nil, err
 	}
@@ -90,12 +106,16 @@ func (p *Project) Start(ctx context.Context, name string, inputs Values) (*Recor
 	return e.root, err
 }
 
-func (p *Project) begin(use Definition, inputs Values, name string) (*execution, error) {
-	data, err := normalise(inputs)
+func (p *Project) begin(queued *Record) (*execution, error) {
+	use := Definition{Name: queued.Node}
+	if queued.Unsaved {
+		use = Definition{Workflow: queued.Workflow}
+	}
+	data, err := normalise(queued.Inputs)
 	if err != nil {
 		return nil, fmt.Errorf("inputs: use JSON-compatible values: %w", err)
 	}
-	inputs, _ = data.(Values)
+	inputs, _ := data.(Values)
 	step, bound, report := p.prepare(use, inputs)
 	report.Problems = append(report.Problems, missing(bound.Open, use.Name, "")...)
 	if len(report.Problems) > 0 {
@@ -107,16 +127,10 @@ func (p *Project) begin(use Definition, inputs Values, name string) (*execution,
 	}
 	step.In = values.Values
 	record := newRecord(step.plan)
-	if use.Workflow != nil {
-		record.Unsaved = true
-		record.Node = name
-		if record.Node == "" {
-			record.Node = "Unsaved workflow"
-		}
-	}
-	record.ID = rand.Text()
+	record.ID, record.Node, record.Unsaved = queued.ID, queued.Node, queued.Unsaved
+	record.Created, record.Trigger = queued.Created, queued.Trigger
 	e := &execution{project: p, root: record, step: *step}
-	err = e.update(record, nil, func() { record.Inputs = step.In })
+	err = e.update(record, nil, false, func() { record.Inputs = step.In })
 	return e, err
 }
 
@@ -124,11 +138,18 @@ func (e *execution) run(ctx context.Context) error {
 	return e.execute(ctx, e.step, e.root, e.step.plan.Name)
 }
 
+func (e *execution) start(node Step, record *Record) error {
+	if !record.Started.IsZero() {
+		return nil
+	}
+	return e.update(record, nil, record == e.root && record.pending(), func() {
+		record.State, record.Started, record.Inputs = "running", time.Now().UTC(), node.In
+	})
+}
+
 func (e *execution) execute(ctx context.Context, node Step, record *Record, location string) error {
 	plan, inputs := node.plan, node.In
-	err := e.update(record, nil, func() {
-		record.State, record.Started, record.Inputs = "running", time.Now().UTC(), inputs
-	})
+	err := e.start(node, record)
 	var outputs Values
 	if err == nil {
 		err = ctx.Err()
@@ -168,7 +189,7 @@ func (e *execution) execute(ctx context.Context, node Step, record *Record, loca
 	if ctx.Err() != nil {
 		err = ctx.Err()
 	}
-	err = e.update(record, err, func() {
+	err = e.update(record, err, false, func() {
 		record.State, record.Finished, record.Outputs = "done", time.Now().UTC(), outputs
 	})
 	var failed *runFailure
@@ -191,20 +212,20 @@ func (e *execution) call(ctx context.Context, parent *Record, node *Step, locati
 	}
 	child := newRecord(node.plan)
 	var id string
-	if err := e.update(parent, nil, func() { id = strconv.Itoa(len(parent.Steps) + 1); parent.Steps[id] = child }); err != nil {
+	if err := e.update(parent, nil, false, func() { id = strconv.Itoa(len(parent.Steps) + 1); parent.Steps[id] = child }); err != nil {
 		return nil, err
 	}
 	where := location + "/" + id
 	if input, exists := node.contract.Fields["open input"]; exists {
 		bound := bind(Ports{open: {Type: input}}, Values{open: value}, where, "", nil)
 		if len(bound.Problems) > 0 {
-			return nil, e.update(child, &runFailure{where, bound.Problems}, func() { child.Inputs = inputs })
+			return nil, e.update(child, &runFailure{where, bound.Problems}, false, func() { child.Inputs = inputs })
 		}
 		inputs[open] = bound.Values[open]
 	}
 	bound := bind(node.plan.Inputs, inputs, where, "", nil)
 	if len(bound.Problems) > 0 {
-		return nil, e.update(child, &runFailure{where, bound.Problems}, func() { child.Inputs = inputs })
+		return nil, e.update(child, &runFailure{where, bound.Problems}, false, func() { child.Inputs = inputs })
 	}
 	call := *node
 	call.In = bound.Values
@@ -240,17 +261,9 @@ func (e *execution) workflow(ctx context.Context, plan *plan, record *Record, in
 			if !ready {
 				continue
 			}
-			resolved, _, err := resolve(plan.Workflow.Steps[id].In, nil, values)
-			arguments, _ := resolved.(map[string]any)
-			if err == nil {
-				bound := bind(plan.Workflow.Steps[id].plan.Inputs, arguments, location+"/"+id, "", nil)
-				arguments = bound.Values
-				if len(bound.Problems) > 0 {
-					err = bound.Problems
-				}
-			}
+			arguments, err := plan.Workflow.Steps[id].arguments(values, location+"/"+id)
 			if err != nil {
-				failure = e.update(record.Steps[id], &runFailure{location + "/" + id, err}, func() { record.Steps[id].Inputs = arguments })
+				failure = e.update(record.Steps[id], &runFailure{location + "/" + id, err}, false, func() { record.Steps[id].Inputs = arguments })
 				break
 			}
 			delete(waiting, id)
@@ -281,7 +294,21 @@ func (e *execution) workflow(ctx context.Context, plan *plan, record *Record, in
 	return result, err
 }
 
-func (p *Project) save(record *Record) error {
+func (node Step) arguments(tree Values, location string) (Values, error) {
+	resolved, _, err := resolve(node.In, nil, tree)
+	if err != nil {
+		return nil, err
+	}
+	arguments, _ := resolved.(Values)
+	bound := bind(node.plan.Inputs, arguments, location, "", nil)
+	problems := append(bound.Problems, missing(bound.Open, location, "")...)
+	if len(problems) > 0 {
+		return bound.Values, problems
+	}
+	return bound.Values, nil
+}
+
+func (p *Project) save(record *Record, durable bool) error {
 	dir := filepath.Join(p.dir, ".inode", "runs")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
@@ -290,15 +317,18 @@ func (p *Project) save(record *Record) error {
 	if err != nil {
 		return err
 	}
-	path := filepath.Join(dir, record.ID+".json")
-	return writeFile(path, data, 0600)
+	return writeFile(p.runFile(record.ID), data, 0600, durable)
+}
+
+func (p *Project) runFile(id string) string {
+	return filepath.Join(p.dir, ".inode", "runs", id+".json")
 }
 
 func (p *Project) ShowRun(id string) (*Record, error) {
 	if !filepath.IsLocal(id) || filepath.Base(id) != id {
 		return nil, fmt.Errorf("invalid run id %q; choose an id from inode runs", id)
 	}
-	data, err := os.ReadFile(filepath.Join(p.dir, ".inode", "runs", id+".json"))
+	data, err := os.ReadFile(p.runFile(id))
 	if err != nil {
 		return nil, err
 	}
@@ -326,6 +356,12 @@ func (p *Project) Runs() ([]Record, error) {
 		}
 		runs = append(runs, *run)
 	}
-	slices.SortFunc(runs, func(a, b Record) int { return b.Started.Compare(a.Started) })
+	created := func(r Record) time.Time {
+		if r.Created.IsZero() {
+			return r.Started
+		}
+		return r.Created
+	}
+	slices.SortFunc(runs, func(a, b Record) int { return created(b).Compare(created(a)) })
 	return runs, nil
 }

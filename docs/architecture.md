@@ -2,7 +2,7 @@
 
 How the model in `design.md` is built. This document follows the model and never the other way round: it may only use concepts defined there (node, run, trigger, plugin). If something here would require the user to learn a new idea, either `design.md` is changed on purpose or this document is simplified.
 
-**Built so far:** the core (catalog, checker, runner, run records), boxes with the control nodes `map`, `choose`, `repeat`, `retry` and `try`, a few built-in nodes, nodes that are programs, plugins installed from a folder or a git repository, the long-running backend with its interface, the command line as a client of it, and the frontend's Canvas, Runs and Plugins screens (editing, saving, checking and running a workflow, building steps inside a box, viewing past runs, run again). Not built yet: run from here, "move into box", the When and Secrets screens, triggers, secrets, long-lived plugin processes, `agent`, plugin search.
+**Built so far:** the core (catalog, checker, runner, run records), boxes with the control nodes `map`, `choose`, `repeat`, `retry` and `try`, a few built-in nodes, nodes that are programs, plugins installed from a folder or a git repository, the long-running backend with its interface, the command line as a client of it, triggers with the built-in kinds `schedule.every`, `schedule.daily` and `folder.new_file`, and the frontend's Canvas, Runs, When and Plugins screens. Not built yet: run from here, "move into box", the web-request trigger kind, trigger kinds from plugins, secrets and the Secrets screen, long-lived plugin processes, `agent`, plugin search.
 
 ## Shape
 
@@ -29,8 +29,8 @@ Six parts, each with one job.
 | **Checker** | Decides whether a workflow is well formed. Returns a list of problems, each naming the step, the input and what to change. |
 | **Runner** | Performs runs. Starts each step when what it references or comes after is ready, starts child runs, applies the failure rule, and reports every change to the store and to watchers. |
 | **Plugin host** | Installs plugins, starts and stops their processes, passes describe and run to them, and passes their requests (call a node, files, secrets, state) back. |
-| **Trigger service** | Loads trigger definitions, activates and deactivates them in their plugins, stores each accepted event, and asks the runner for one run per event, in order. |
-| **Store** | Keeps run records, files, secrets, plugin state, waiting events and which triggers are on. |
+| **Trigger service** | Loads trigger definitions, checks each as the two-step workflow it is, starts and stops watching for its kind, stores each accepted event as a waiting run, and starts those runs one at a time, in order. |
+| **Store** | Keeps run records (including those still waiting for their trigger), files, secrets, plugin state and which triggers are on. |
 
 Rules that hold the parts together:
 
@@ -41,7 +41,7 @@ Rules that hold the parts together:
 - **Waiting does not block children.** A run waiting on child runs does not occupy a scheduler execution slot needed by those children.
 - **Values are checked at the edges.** A value arriving through an unchecked connection is checked against what the consumer expects before the consumer starts, and a node's outputs are checked against its description when it returns.
 - **Records form a tree.** Each run records its node, inputs, parent run, and for every step its state (waiting, running, done, failed, copied, interrupted), what it received and what it returned. Data is stored as is, files by reference to unchanged contents, secrets by name, live objects as a placeholder.
-- **Events are handed over in one durable operation.** Accepting an event means storing it. Removing it from the waiting queue and creating its run record happen together, so an accepted event always has either a waiting-event record or a run record.
+- **An accepted event is a run record.** Accepting an event means writing a run record in the waiting state, forced to disk before the source is told it was accepted. There is no separate queue to hand over from: a trigger's queue is its records that are waiting and have never started. Leaving the queue is the same record being marked started, also forced to disk, so after a crash a record is either still queued or started and therefore interrupted, never both and never neither. Ordinary progress of a run is written without that cost.
 
 ### One run, end to end
 
@@ -79,7 +79,8 @@ A thin client of the same interface.
 | `inode run <node> key=value` | starts a run and prints its outputs |
 | `inode nodes`, `inode show <node>` | lists and describes nodes |
 | `inode runs`, `inode runs show/follow/stop/again <id>` | lists, shows, follows, stops and repeats runs |
-| `inode trigger add/list/on/off` | manages triggers |
+| `inode trigger add <kind> key=value run=<node> key=value` | adds a trigger, which starts off and is given a name such as `schedule.daily-1` |
+| `inode trigger list/on/off/clear/remove` | lists triggers and what each does, switches one on or off, clears its waiting events, removes it |
 | `inode search`, `inode add <plugin>` | finds and installs plugins |
 | `inode start`, `inode stop` | starts the backend and opens the frontend; stops the backend |
 
@@ -93,11 +94,11 @@ A thin client of the same interface.
 my-project/
   digest.flow           a workflow (shared)
   nodes/                your own nodes: description + program (shared)
-  triggers/             one file per trigger definition (shared)
+  triggers/             one file per trigger: two steps, event and run (shared)
   plugins               the plugins this project uses, with versions (shared)
   .inode/               the backend's private data (not shared):
                         installed plugins, run records, files, secrets,
-                        waiting events, which triggers are on
+                        which triggers are on
 ```
 
 - Everything outside `.inode/` is plain text that can be read, edited by hand, and put under version control. Saving a workflow from the frontend rewrites its file, so comments written by hand in it are lost.

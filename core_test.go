@@ -412,7 +412,7 @@ func TestInterruptedAndUnrecordableRuns(t *testing.T) {
 
 func TestBuiltinDeclarations(t *testing.T) {
 	for name, node := range builtins(t.TempDir()) {
-		if node.Doc == "" || node.run == nil {
+		if node.Doc == "" || node.run == nil && node.watch == nil {
 			t.Fatalf("%s needs a description and implementation", name)
 		}
 		for _, ports := range []Ports{node.Inputs, node.Outputs} {

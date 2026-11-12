@@ -25,11 +25,12 @@ type backend struct {
 	active   map[string]*activeRun
 	wg       sync.WaitGroup
 	requests sync.WaitGroup
+	triggers *triggerService
 }
 
 type activeRun struct {
 	cancel  context.CancelFunc
-	latest  json.RawMessage
+	record  *Record
 	changed chan struct{}
 }
 
@@ -59,10 +60,10 @@ func Serve(ctx context.Context, dir string) error {
 		return err
 	}
 	for i := range runs {
-		if runs[i].State == "running" || runs[i].State == "waiting" {
+		if (runs[i].State == "running" || runs[i].State == "waiting") && !runs[i].pending() {
 			run := &runs[i]
 			e := execution{project: p, root: run}
-			if err := e.update(run, nil, func() { interrupt(run) }); err != nil {
+			if err := e.update(run, nil, false, func() { interrupt(run) }); err != nil {
 				return err
 			}
 		}
@@ -74,12 +75,15 @@ func Serve(ctx context.Context, dir string) error {
 	defer listener.Close()
 	client := Client{Address: listener.Addr().String(), Credential: rand.Text()}
 	data, _ := json.Marshal(client)
-	if err := writeFile(backendFile(dir), data, 0600); err != nil {
+	if err := writeFile(backendFile(dir), data, 0600, false); err != nil {
 		return err
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	b := &backend{dir: dir, ctx: ctx, cancel: cancel, offline: make(chan struct{}), active: map[string]*activeRun{}}
+	if err := b.openTriggers(p, runs); err != nil {
+		return err
+	}
 	page := frontend()
 	server := &http.Server{BaseContext: func(net.Listener) context.Context { return ctx }, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/x-ndjson")
@@ -179,23 +183,33 @@ func interrupt(r *Record) {
 }
 
 func (b *backend) startRun(p *Project, use Definition, inputs Values, name string) (string, error) {
+	b.triggers.mu.Lock()
+	defer b.triggers.mu.Unlock()
+	e, err := p.begin(newRun(use, inputs, name))
+	if err != nil {
+		return "", err
+	}
+	return b.launch(e)
+}
+
+func (b *backend) launch(e *execution) (string, error) {
 	b.mu.Lock()
 	if err := b.ctx.Err(); err != nil {
 		b.mu.Unlock()
+		if !e.root.pending() {
+			e.update(e.root, err, false, func() { e.root.Finished = time.Now().UTC() })
+		}
 		return "", err
 	}
 	b.wg.Add(1)
+	runCtx, cancel := context.WithCancel(b.ctx)
+	b.active[e.root.ID].cancel = cancel
 	b.mu.Unlock()
-	e, err := p.begin(use, inputs, name)
-	if err != nil {
+	if err := e.start(e.step, e.root); err != nil {
+		cancel()
 		b.wg.Done()
 		return "", err
 	}
-	runCtx, cancel := context.WithCancel(b.ctx)
-	b.mu.Lock()
-	data, _ := json.Marshal(e.root)
-	b.active[e.root.ID] = &activeRun{cancel, data, make(chan struct{})}
-	b.mu.Unlock()
 	go func() {
 		defer b.wg.Done()
 		defer cancel()
@@ -217,6 +231,20 @@ func (b *backend) again(p *Project, id string) (string, error) {
 }
 
 func (b *backend) stopRun(p *Project, id string) error {
+	b.triggers.mu.Lock()
+	defer b.triggers.mu.Unlock()
+	record, err := p.ShowRun(id)
+	if err != nil {
+		return err
+	}
+	if record.pending() {
+		e := execution{project: p, root: record}
+		err := e.update(record, context.Canceled, false, func() { record.Finished = time.Now().UTC() })
+		if err == context.Canceled {
+			return nil
+		}
+		return err
+	}
 	b.mu.Lock()
 	run := b.active[id]
 	b.mu.Unlock()
@@ -224,13 +252,15 @@ func (b *backend) stopRun(p *Project, id string) error {
 		run.cancel()
 		return nil
 	}
-	_, err := p.ShowRun(id)
-	return err
+	return nil
 }
 
 func (b *backend) publish(r *Record) {
+	if b.active[r.ID] == nil && (r.State == "waiting" || r.State == "running") {
+		b.active[r.ID] = &activeRun{changed: make(chan struct{})}
+	}
 	if run := b.active[r.ID]; run != nil {
-		run.latest, _ = json.Marshal(r)
+		run.record = r
 		close(run.changed)
 		run.changed = make(chan struct{})
 		if r.State != "running" && r.State != "waiting" {
@@ -246,7 +276,10 @@ func (b *backend) followRun(ctx context.Context, p *Project, id string, send fun
 		var changed <-chan struct{}
 		var err error
 		if run := b.active[id]; run != nil {
-			value, changed = run.latest, run.changed
+			var data json.RawMessage
+			data, err = json.Marshal(run.record)
+			value = data
+			changed = run.changed
 		} else {
 			value, err = p.ShowRun(id)
 		}

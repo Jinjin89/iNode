@@ -102,9 +102,9 @@ func (d Definition) MarshalJSON() ([]byte, error) {
 
 type Workflow struct {
 	Doc     string          `json:"doc,omitempty"`
-	Inputs  Ports           `json:"inputs"`
+	Inputs  Ports           `json:"inputs,omitempty"`
 	Steps   map[string]Step `json:"steps"`
-	Outputs Values          `json:"outputs"`
+	Outputs Values          `json:"outputs,omitempty"`
 	View    any             `json:"view,omitempty"`
 }
 
@@ -114,9 +114,11 @@ type Node struct {
 	Inputs          Ports     `json:"inputs"`
 	Outputs         Ports     `json:"outputs"`
 	NoOutsideEffect bool      `json:"no_outside_effect"`
+	Trigger         bool      `json:"trigger,omitempty"`
 	Workflow        *Workflow `json:"workflow,omitempty"`
 	Version         string    `json:"version,omitempty"`
 	run             func(context.Context, Values, Call) (Values, error)
+	watch           func(context.Context, Values) (watch, error)
 	problem         error
 }
 
@@ -142,6 +144,22 @@ func (p *Project) register(name string, node Node) {
 		node.problem = fmt.Errorf("node %q has more than one definition; rename one of them", name)
 	}
 	node.Name = name
+	node.Trigger = node.watch != nil
+	if node.watch != nil {
+		node.run = func(ctx context.Context, in Values, _ Call) (Values, error) {
+			ctx, cancel := context.WithCancel(ctx)
+			defer cancel()
+			listen, err := node.watch(ctx, in)
+			var event Values
+			if err == nil {
+				err = listen(func(value Values) error { event = value; cancel(); return context.Canceled })
+			}
+			if event != nil {
+				return event, nil
+			}
+			return nil, err
+		}
+	}
 	p.nodes[name] = node
 }
 

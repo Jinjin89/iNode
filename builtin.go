@@ -23,6 +23,21 @@ func builtins(dir string) map[string]Node {
 	}
 	client := &http.Client{Timeout: 30 * time.Second}
 	return map[string]Node{
+		"schedule.every": {
+			Doc: "Emit the time every interval in seconds, for example 60 for one minute.", NoOutsideEffect: true,
+			Inputs: Ports{"interval": {Type: numberType}}, Outputs: Ports{"time": {Type: textType}}, watch: every,
+		},
+		"schedule.daily": {
+			Doc: "Emit the time once a day at a local time, written HH:MM, for example 08:00.", NoOutsideEffect: true,
+			Inputs: Ports{"at": {Type: textType}}, Outputs: Ports{"time": {Type: textType}}, watch: daily,
+		},
+		"folder.new_file": {
+			Doc: "Check new file names once a second: files present when switched on are ignored; files removed before being seen are missed; files can be reported before writing finishes.", NoOutsideEffect: true,
+			Inputs: Ports{"path": {Type: textType}}, Outputs: Ports{"path": {Type: textType}, "name": {Type: textType}},
+			watch: func(ctx context.Context, in Values) (watch, error) {
+				return newFile(ctx, Values{"path": path(in["path"].(string))})
+			},
+		},
 		"map": {
 			Doc: "Call a node for each item, one at a time, preserving order.", NoOutsideEffect: true,
 			Inputs: Ports{"over": {Type: typ("list of T")}, "do": {Type: typ("node(T) gives U")}}, Outputs: Ports{"result": {Type: typ("list of U")}},

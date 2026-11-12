@@ -82,6 +82,7 @@ export function Field({ port = 'any', value, onChange, catalog = [], path = [], 
   return <div className={'field nodrag ' + (shownValue === undefined ? 'empty' : '')}>{handle}
     {json ? <textarea aria-label="JSON value" spellCheck="false" value={draft} onChange={event => setDraft(event.target.value)} onBlur={commit} /> :
       <input aria-label={kind + ' value'} type={kind === 'bool' ? 'checkbox' : kind === 'number' ? 'number' : 'text'}
+        step={kind === 'number' ? 'any' : undefined}
         checked={kind === 'bool' ? shownValue === true : undefined} value={kind === 'bool' ? undefined : shown ?? ''}
         placeholder={typeof port === 'object' && 'default' in port ? String(port.default) : 'Not filled'}
         onChange={event => onChange(kind === 'bool' ? event.target.checked : kind === 'number'
@@ -93,7 +94,7 @@ export function Field({ port = 'any', value, onChange, catalog = [], path = [], 
   </div>;
 }
 
-function Messages({ items }) {
+export function Messages({ items }) {
   return items.map((problem, i) => <p className="problem" key={i}>{problem.input && <strong>{problem.input}: </strong>}{problem.message}</p>);
 }
 

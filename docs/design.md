@@ -81,14 +81,14 @@ A step can also list other steps in `after`. It then waits for them to succeed w
 
 ## Trigger
 
-A trigger says: when this happens, run this node with these inputs. The kinds of "when" come from plugins: every day at a time, a web request arriving, a file appearing in a folder. A trigger's event data fills the node's inputs with the usual references (`=event.path`).
+A trigger says: when this happens, run this node with these inputs. A kind of "when" is itself a node: its inputs are the trigger's settings and its outputs are the event data. Every day at a time, a web request arriving and a file appearing in a folder are such nodes, and plugins can bring more. A trigger is written as two steps, `event` (the kind) and `run` (the node), so the event data fills the node's inputs with the usual references (`=event.path`). Used as an ordinary step in a workflow, a kind waits for one event and returns it.
 
 Each event starts its own ordinary run. The behaviour is fixed and the same for every trigger:
 
 - Runs of one trigger do not overlap; events wait in order. The trigger shows its current run and how many events are waiting.
 - A failed run does not stop the trigger. The failure shows in the run list and on the trigger.
 - Times missed while iNode was not running are skipped and reported once.
-- An event the backend has accepted is stored and is kept until its run exists. Events may arrive twice. What happens before acceptance depends on where the event comes from.
+- An accepted event is a run from that moment: it is stored as a run that is waiting, and the waiting runs of a trigger are its queue. After a restart, a run that had not started still runs once; a run that had started is marked interrupted and is not started again. Events may arrive twice. What happens before acceptance depends on where the event comes from.
 - Switching a trigger off stops new events, lets the current run finish, and keeps waiting events for when it is switched on again. The user can clear them.
 
 Trigger definitions are plain files beside the workflows. Whether a trigger is on is remembered per machine and starts as off in a copied project. Triggers that are on are active whenever the backend is running.
@@ -221,6 +221,7 @@ These are deliberate. Each keeps the model small.
 | Cleanup guaranteed after failure | `try(do, on_error)` covers the common case; there is no "finally". |
 | Using one plugin's live objects in another plugin | Exchange files. |
 | Transforming secrets inside a workflow | A node that needs a secret takes a `secret` input and uses it internally. |
+| Seeing every file in a watched folder | The folder kind looks about once a second. Files already there when it is switched on are not events, a file removed before it is seen is missed, and a file can be reported before another program has finished writing it. |
 | Coordinating state shared between workflows | Only runs of one trigger are kept from overlapping. Plugins that keep state guard it themselves. |
 | Formulas inside references | References select data by path only; computation is a node. |
 | Enforced limits on what a plugin can do | Plugins are trusted code; install only what you trust. |
