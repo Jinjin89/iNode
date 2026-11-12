@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -76,6 +77,91 @@ func TestSaveWorkflow(t *testing.T) {
 	json.Unmarshal(frames[len(frames)-1], &run)
 	if run.State != "done" || run.Outputs["text"] != "bye" || run.Workflow.View == nil {
 		t.Fatalf("draft run: %+v", run)
+	}
+}
+
+func TestSaveExample(t *testing.T) {
+	files := map[string]string{}
+	for _, name := range []string{"upper.flow", "greeting.flow"} {
+		data, err := os.ReadFile(filepath.Join("examples", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		files[name] = string(data)
+	}
+	p := fileProject(t, files)
+	client := runningBackend(t, p.dir)
+	var before, after Node
+	json.Unmarshal(request(t, client, "show", "greeting")[0], &before)
+	request(t, client, "save", "greeting", before.Version, before.Workflow)
+	json.Unmarshal(request(t, client, "show", "greeting")[0], &after)
+	if !reflect.DeepEqual(before.Workflow, after.Workflow) {
+		t.Fatalf("save changed the workflow: %+v -> %+v", before.Workflow, after.Workflow)
+	}
+	data, _ := os.ReadFile(filepath.Join(p.dir, "greeting.flow"))
+	if !strings.Contains(string(data), "name: text") {
+		t.Fatalf("a type-only input must use the short form: %s", data)
+	}
+	request(t, client, "save", "default", "", Values{"inputs": Values{"n": Values{"type": "number", "default": 0}}, "outputs": Values{"n": "=inputs.n"}})
+	data, _ = os.ReadFile(filepath.Join(p.dir, "default.flow"))
+	if !strings.Contains(string(data), "type: number") || !strings.Contains(string(data), "default: 0") {
+		t.Fatalf("a default must keep the long form: %s", data)
+	}
+}
+
+func TestPortDescriptionStructure(t *testing.T) {
+	p := project(t, map[string]string{"tiny": `inputs: {words: list of text}
+steps: {m: {use: map, in: {over: =inputs.words, do: text.upper}}}
+outputs: {words: =m.result}`})
+	client := runningBackend(t, p.dir)
+	var nodes []Values
+	json.Unmarshal(request(t, client, "nodes")[0], &nodes)
+	for _, node := range nodes {
+		if node["name"] == "map" {
+			got, err := selectPath(node, []string{"inputs", "do", "kind"})
+			if err != nil || got != "node" {
+				t.Fatalf("catalog port structure: %v, %v", got, err)
+			}
+		}
+	}
+	for _, test := range []struct {
+		operation string
+		args      []any
+		path      []string
+		want      string
+	}{
+		{"show", []any{"map"}, []string{"inputs", "do", "kind"}, "node"},
+		{"show", []any{"tiny"}, []string{"workflow", "inputs", "words", "item", "kind"}, "text"},
+		{"check", []any{"tiny"}, []string{"nodes", `["steps","m"]`, "outputs", "result", "item", "kind"}, "text"},
+	} {
+		var value Values
+		json.Unmarshal(request(t, client, test.operation, test.args...)[0], &value)
+		got, err := selectPath(value, test.path)
+		if err != nil || got != test.want {
+			t.Fatalf("%v: %v, %v", test.path, got, err)
+		}
+	}
+	var value Values
+	json.Unmarshal(request(t, client, "show", "tiny")[0], &value)
+	request(t, client, "save", "tiny", value["version"], value["workflow"])
+	data, _ := os.ReadFile(filepath.Join(p.dir, "tiny.flow"))
+	if strings.Contains(string(data), "kind:") || !strings.Contains(string(data), "list of text") {
+		t.Fatalf("display structure leaked into workflow syntax: %s", data)
+	}
+	request(t, client, "save", "literal", "", Values{"outputs": Values{"value": Values{"kind": "kept"}}})
+	data, _ = os.ReadFile(filepath.Join(p.dir, "literal.flow"))
+	if !strings.Contains(string(data), "kind: kept") {
+		t.Fatalf("literal data was mistaken for description metadata: %s", data)
+	}
+	var ports Ports
+	if err := decode([]byte(`{"x":{"type":"object{token: secret, words: list of text}","kind":"ignored"}}`), &ports); err != nil {
+		t.Fatal(err)
+	}
+	data, _ = json.Marshal(ports)
+	json.Unmarshal(data, &value)
+	got, err := selectPath(value, []string{"x", "fields", "token", "kind"})
+	if err != nil || got != "secret" || ports["x"].Type.Name != "object" {
+		t.Fatalf("the declared type must be the only source: %s, %v", data, err)
 	}
 }
 

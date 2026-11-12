@@ -68,7 +68,7 @@ Five screens:
 - **Plugins.** Search, install, remove; what a project is missing, with what each plugin says it accesses.
 - **Secrets.** Add, replace and remove by name. Values are never shown again.
 
-A field is chosen by the input's type: text box, number box, switch, list editor, file picker, secret picker, socket only (for live objects, which cannot be typed in), or box.
+A field is chosen by the input's type: text box, number box, switch, list editor, file picker, secret picker, socket only (for live objects, which cannot be typed in), or box. Each described port carries its type as display text and as structure from the same type tree, so clients do not parse the notation.
 
 ## Command line
 

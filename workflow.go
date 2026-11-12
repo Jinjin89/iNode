@@ -21,15 +21,11 @@ func (p *Project) Save(name, basedOn string, value json.RawMessage) (Node, error
 	if node, exists := p.nodes[name]; exists && node.Workflow == nil {
 		return Node{}, fmt.Errorf("node %q already exists; choose another workflow name", name)
 	}
-	var raw any
-	if err := json.Unmarshal(value, &raw); err != nil {
-		return Node{}, err
-	}
 	var flow Workflow
 	if err := decode(value, &flow); err != nil {
 		return Node{}, err
 	}
-	data, err := yaml.Marshal(raw)
+	data, err := yaml.Marshal(flow)
 	if err != nil {
 		return Node{}, err
 	}

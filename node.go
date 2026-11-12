@@ -17,12 +17,41 @@ import (
 type Values = map[string]any
 
 type Port struct {
-	Type            Type `json:"type"`
-	Default         any  `json:"default,omitempty"`
-	NoOutsideEffect bool `json:"no_outside_effect,omitempty"`
+	Type            Type `json:"type" yaml:"type"`
+	Default         any  `json:"default,omitempty" yaml:"default,omitempty"`
+	NoOutsideEffect bool `json:"no_outside_effect,omitempty" yaml:"no_outside_effect,omitempty"`
 }
 
 type Ports map[string]Port
+
+func (port Port) MarshalYAML() (any, error) {
+	if port.Default == nil && !port.NoOutsideEffect {
+		return port.Type.String(), nil
+	}
+	type declaration Port
+	return declaration(port), nil
+}
+
+func (port Port) MarshalJSON() ([]byte, error) {
+	type declaration Port
+	value := struct {
+		declaration
+		Kind   string `json:"kind"`
+		Item   *Port  `json:"item,omitempty"`
+		Fields *Ports `json:"fields,omitempty"`
+	}{declaration: declaration(port), Kind: port.Type.Name}
+	if port.Type.Item != nil {
+		value.Item = &Port{Type: *port.Type.Item}
+	}
+	if port.Type.Fields != nil {
+		fields := Ports{}
+		for name, typ := range port.Type.Fields {
+			fields[name] = Port{Type: typ}
+		}
+		value.Fields = &fields
+	}
+	return json.Marshal(value)
+}
 
 func (ports *Ports) UnmarshalJSON(data []byte) error {
 	var raw map[string]json.RawMessage
@@ -32,8 +61,11 @@ func (ports *Ports) UnmarshalJSON(data []byte) error {
 	*ports = Ports{}
 	for _, name := range keys(raw) {
 		var declaration struct {
-			Type    Type `json:"type"`
-			Default any  `json:"default"`
+			Type    Type            `json:"type"`
+			Default any             `json:"default"`
+			Kind    json.RawMessage `json:"kind"`
+			Item    json.RawMessage `json:"item"`
+			Fields  json.RawMessage `json:"fields"`
 		}
 		var err error
 		if raw[name][0] == '"' {
@@ -73,9 +105,9 @@ func (ports Ports) substitute(types map[string]Type) Ports {
 }
 
 type Step struct {
-	Use      Definition `json:"use"`
-	In       Values     `json:"in,omitempty"`
-	After    []string   `json:"after,omitempty"`
+	Use      Definition `json:"use" yaml:"use"`
+	In       Values     `json:"in,omitempty" yaml:"in,omitempty"`
+	After    []string   `json:"after,omitempty" yaml:"after,omitempty"`
 	plan     *plan
 	contract *Type
 }
@@ -117,12 +149,19 @@ func (d Definition) MarshalJSON() ([]byte, error) {
 	return json.Marshal(d.Name)
 }
 
+func (d Definition) MarshalYAML() (any, error) {
+	if d.Workflow != nil {
+		return d.Workflow, nil
+	}
+	return d.Name, nil
+}
+
 type Workflow struct {
-	Doc     string          `json:"doc,omitempty"`
-	Inputs  Ports           `json:"inputs,omitempty"`
-	Steps   map[string]Step `json:"steps"`
-	Outputs Values          `json:"outputs,omitempty"`
-	View    any             `json:"view,omitempty"`
+	Doc     string          `json:"doc,omitempty" yaml:"doc,omitempty"`
+	Inputs  Ports           `json:"inputs,omitempty" yaml:"inputs,omitempty"`
+	Steps   map[string]Step `json:"steps" yaml:"steps"`
+	Outputs Values          `json:"outputs,omitempty" yaml:"outputs,omitempty"`
+	View    any             `json:"view,omitempty" yaml:"view,omitempty"`
 }
 
 type Node struct {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { add, box, connect, content, emptyReport, graph, handle, parseHandle, layout, reference, rename, runWorkflow, set, type, type Workflow, type Description, type Reference } from './model';
+import { add, box, connect, connectionProblem, content, emptyReport, emptyValue, expose, graph, groups, handle, history, kind, move, parseHandle, layout, reference, rename, runWorkflow, set, type, workflowDescription, type Workflow, type Description, type Reference, type History } from './model';
 
 const catalog: Description[] = [
   { name: 'text.upper', inputs: { text: 'text' }, outputs: { text: 'text' } },
@@ -29,9 +29,10 @@ describe('document edits', () => {
   });
   it('adds and deletes a step without repairing dangling references', () => {
     const added = add(tiny, 'text.upper');
-    expect(added.steps?.step1).toEqual({ use: 'text.upper' });
-    expect(tiny.steps?.step1).toBeUndefined();
-    expect(add(added, 'text.upper').steps?.step2).toEqual({ use: 'text.upper' });
+    expect(added.steps?.upper).toEqual({ use: 'text.upper' });
+    expect(tiny.steps?.upper).toBeUndefined();
+    expect(add(added, 'text.upper').steps?.upper2).toEqual({ use: 'text.upper' });
+    expect(add(tiny, 'plugin.text.join').steps?.join).toEqual({ use: 'plugin.text.join' });
     const deleted = set(tiny, ['steps', 'a'], undefined);
     expect(deleted.steps.a).toBeUndefined();
     expect(deleted.steps.b.in.text).toBe('=a.text');
@@ -50,6 +51,7 @@ describe('document edits', () => {
     const named = set(tiny, ['steps', '__proto__'], { use: 'text.upper' });
     expect(Object.keys(named.steps)).toContain('__proto__');
     expect(Object.getPrototypeOf(named.steps)).toBe(Object.prototype);
+    expect(set({ value: 1, other: 'kept' }, ['value'], (value: number) => value + 1)).toEqual({ value: 2, other: 'kept' });
   });
   it('draws a connection without deciding whether its types fit', () => {
     expect(connect(tiny, ['a', 'text'], ['steps', 'b', 'in', 'number']).steps?.b.in?.number).toBe('=a.text');
@@ -118,13 +120,118 @@ describe('document to graph', () => {
     expect(handle(['x'])).not.toContain('"');
     expect(reference('=a.text')).toBe(true);
     expect(reference('==a.text')).toBe(false);
-    expect(box('node() gives T')).toBe(true);
+    expect(box({ type: 'node() gives T', kind: 'node' })).toBe(true);
+    expect(box('node() gives T')).toBe(false);
+    expect(kind({ type: 'arbitrary display text', kind: 'number' })).toBe('number');
     expect(type('number')).toBe('number');
     expect(type({ type: 'bool', default: false })).toBe('bool');
   });
 });
 
-it('lays out by dependency depth and tolerates cycles while editing', () => {
-  expect(layout(['a', 'b', 'c'], [{ source: 'a', target: 'c' }])).toEqual({ a: { x: 0, y: 0 }, b: { x: 0, y: 440 }, c: { x: 390, y: 0 } });
-  expect(Object.values(layout(['a', 'b'], [{ source: 'a', target: 'b' }, { source: 'b', target: 'a' }])).every(p => Number.isFinite(p.x))).toBe(true);
+describe('canvas building', () => {
+  it('groups workflows first and searches every group', () => {
+    const nodes = [...catalog, { name: 'words', doc: 'Reading', workflow: tiny }, { name: 'tool', doc: 'Reading' }];
+    expect(groups(nodes, '').map(([group]) => group)).toEqual(['Your workflows', 'Other nodes', 'text']);
+    expect(groups(nodes, 'READ').flatMap(([, nodes]) => nodes.map(node => node.name))).toEqual(['words', 'tool']);
+    expect(groups(nodes, 'missing')).toEqual([]);
+  });
+  it('stores the dropped position and leaves a clicked step to layout', () => {
+    const position = { x: 2, y: 3 };
+    expect(add(tiny, 'text.upper', position).view?.positions[handle(['steps', 'upper'])]).toEqual(position);
+    expect(add(tiny, 'text.upper').view).toBeUndefined();
+  });
+  it('uses one empty value rule and one accessor for the workflow description', () => {
+    for (const [kind, value] of Object.entries({ text: '', number: 0, bool: false, list: [], object: {}, any: null })) {
+      expect(emptyValue({ type: kind, kind })).toEqual(value);
+    }
+    expect(emptyValue({ type: 'number', kind: 'number', default: 2 })).toBe(2);
+    expect(emptyValue({ type: 'bool', kind: 'bool', default: false })).toBe(false);
+    const root = { inputs: { text: { type: 'text', kind: 'text' } } };
+    expect(workflowDescription({ ...emptyReport, nodes: { null: root } })).toBe(root);
+  });
+  it('exposes ports using ordinary declarations and references with unique names', () => {
+    const asked = expose(tiny, 'inputs', 'a', 'text', { type: 'text', kind: 'text', default: 'hi' });
+    expect(asked.inputs?.text2).toEqual({ type: 'text', default: 'hi' });
+    expect(asked.steps?.a.in?.text).toBe('=inputs.text2');
+    expect(expose(tiny, 'inputs', 'a', 'prefix', { type: 'text', kind: 'text' }).inputs?.prefix).toEqual({ type: 'text' });
+    for (const written of ['written', '=b.text', '==literal']) {
+      const replaced = expose(set(tiny, ['steps', 'a', 'in', 'text'], written), 'inputs', 'a', 'text', { type: 'text' });
+      expect(replaced.inputs?.text2).toEqual({ type: 'text' });
+    }
+    expect(expose(tiny, 'inputs', 'a', 'text', { type: 'text', default: '=plain default' }).inputs?.text2)
+      .toEqual({ type: 'text', default: '=plain default' });
+    const given = expose(tiny, 'outputs', 'a', 'text');
+    expect(given.outputs?.text2).toBe('=a.text');
+    expect(tiny.inputs?.text).toBe('text');
+  });
+  it('reorders and removes list values without losing references', () => {
+    const list = ['hi', '=a.text', 'yo'];
+    expect(move(list, 1, 0)).toEqual(['=a.text', 'hi', 'yo']);
+    expect(set(move(list, 1, 0), [1], undefined)).toEqual(['=a.text', 'yo']);
+    expect(list).toEqual(['hi', '=a.text', 'yo']);
+  });
+  it('uses checker markings and words for bad, unchecked, malformed and after connections', () => {
+    const problem = { step: '(inline)/b', input: 'text', message: 'needs number, got text; supply a number value or output' };
+    const checked = { ...report, problems: [problem], references: [{ ...refs[1], bad: true }] };
+    expect(connectionProblem(checked, refs[1].path, '(inline)')).toBe(problem);
+    expect(connectionProblem({ ...checked, references: [{ ...refs[1], bad: false, unchecked: true }] }, refs[1].path, '(inline)')).toBeUndefined();
+    expect(connectionProblem({ ...checked, references: [] }, refs[1].path, '(inline)')).toBe(problem);
+    const after = { ...problem, input: 'after', message: 'dependency makes a cycle' };
+    expect(connectionProblem({ ...emptyReport, problems: [after] }, ['steps', 'b', 'after'], '(inline)')).toBe(after);
+    const row = { ...refs[1], input: 'text.0', path: [...refs[1].path, '0'], bad: true };
+    expect(connectionProblem({ ...checked, references: [row] }, row.path, '(inline)')).toBe(problem);
+    const captured = { ...row, step: '(inline)/b/do', input: 'text', path: ['steps', 'b', 'in', 'do', 'in', 'text'] };
+    const box = { ...problem, input: 'do', message: 'node signatures differ' };
+    expect(connectionProblem({ ...checked, problems: [box], references: [captured] }, captured.path, '(inline)')).toBe(box);
+    const namedAfter = { ...refs[1], input: 'after', path: ['steps', 'b', 'in', 'after'] };
+    expect(connectionProblem({ ...checked, problems: [after], references: [namedAfter] }, namedAfter.path, '(inline)')).toBeUndefined();
+  });
+  it('keeps one undo entry per visit or drag, and clears redo after a new edit', () => {
+    const initial: History = { present: tiny, past: [], future: [] }, visit = {};
+    const first = history(initial, { type: 'edit', value: set(tiny, ['doc'], 'h'), group: visit });
+    const typed = history(first, { type: 'edit', value: set(tiny, ['doc'], 'hi'), group: visit });
+    expect(typed.past).toEqual([tiny]);
+    const moved = history(typed, { type: 'edit', value: set(typed.present, ['view'], { x: 1 }), group: {} });
+    expect(moved.past).toHaveLength(2);
+    expect(history(moved, { type: 'undo' }).present).toEqual(typed.present);
+    expect(history(history(moved, { type: 'undo' }), { type: 'redo' }).present).toEqual(moved.present);
+    const undone = history(typed, { type: 'undo' });
+    expect(undone.present).toBe(tiny);
+    expect(history(undone, { type: 'edit', value: add(tiny, 'text.upper') }).future).toEqual([]);
+    expect(history(typed, { type: 'edit', value: typed.present })).toBe(typed);
+    expect(history(typed, { type: 'reset', value: tiny })).toEqual(initial);
+    const newer = history(typed, { type: 'edit', value: current => set(current, ['outputs', 'other'], 'kept') });
+    const field = history(newer, { type: 'edit', value: current => set(current, ['steps', 'a', 'in', 'text'], 'yo') });
+    expect(field.present.outputs?.other).toBe('kept');
+    expect(field.present.steps?.a.in?.text).toBe('yo');
+  });
+});
+
+describe('layout', () => {
+  const input = handle(['inputs']), output = handle(['outputs']);
+  it('puts boundaries on either side and steps by dependency depth, including disconnected steps', () => {
+    const positions = layout([input, 'a', 'b', 'c', output], [{ source: 'a', target: 'c' }], {}, { a: { height: 600 } });
+    expect(positions[input].x).toBeLessThan(positions.a.x);
+    expect(positions.a.x).toBe(positions.b.x);
+    expect(positions.b.y).toBeGreaterThanOrEqual(positions.a.y + 600);
+    expect(positions.a.x).toBeLessThan(positions.c.x);
+    expect(positions.c.x).toBeLessThan(positions[output].x);
+    expect(positions[input].y).toBe(positions[output].y);
+  });
+  it('preserves stored positions and avoids their rectangles with measured heights', () => {
+    const pinned = { x: 390, y: 0 };
+    const positions = layout([input, 'a', 'b', output], [], { a: pinned }, { a: { height: 900 } });
+    expect(positions.a).toEqual(pinned);
+    expect(positions.b.y).toBeGreaterThanOrEqual(900);
+    expect(positions[input].x).toBeLessThan(pinned.x);
+    expect(positions[output].x).toBeGreaterThan(pinned.x + 290);
+    const moved = layout([input, 'a', 'b', output], [], { a: { x: -400, y: 20 } });
+    expect(moved[input].x).toBeLessThan(-400);
+  });
+  it('keeps an empty workflow on one line across the available width and tolerates cycles', () => {
+    const positions = layout([input, output], [], {}, {}, 1200);
+    expect(positions[input]).toEqual({ x: 0, y: 0 });
+    expect(positions[output]).toEqual({ x: 910, y: 0 });
+    expect(Object.values(layout(['a', 'b'], [{ source: 'a', target: 'b' }, { source: 'b', target: 'a' }])).every(p => Number.isFinite(p.x))).toBe(true);
+  });
 });
