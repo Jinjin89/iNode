@@ -8,6 +8,7 @@ import { Runs } from './Runs';
 import { Duration, Value } from './Value';
 import { Guide } from './Guide';
 import { Plugins } from './Plugins';
+import { Icon } from './Icon';
 
 function Source({ source, showRun, fail }) {
   const [record, setRecord] = useState(null);
@@ -177,7 +178,7 @@ export function App() {
       }}>{name}</button>)}</nav>
       <button className={'guide-toggle ' + (guide ? 'active' : 'quiet')} aria-expanded={!!guide} onClick={() => setGuide(!guide)}>Guide</button>
     </header>
-    {error && <div className="notice problem" role="alert">{error}<button className="quiet" onClick={() => setError('')}>Close</button></div>}
+    {error && <div className="notice problem" role="alert">{error}<button className="quiet" onClick={() => setError('')} title="Close"><Icon name="close" />Close</button></div>}
     <div className="page-content">{screen === 'Canvas' ? <div className="workspace">
       <section className="work"><div className={'toolbar ' + (runId ? 'run-bar' : '')}>
         {runId ? <>
@@ -202,15 +203,15 @@ export function App() {
           </>}
         </> : <>
           <button className="quiet" onClick={() => leave(() => replace({ name: '', version: '', workflow: empty }))}>New</button>
-          <button title="Undo (Ctrl/Cmd+Z)" disabled={!edits.past.length} onClick={() => dispatch({ type: 'undo' })}>Undo</button>
-          <button title="Redo (Shift+Ctrl/Cmd+Z)" disabled={!edits.future.length} onClick={() => dispatch({ type: 'redo' })}>Redo</button>
+          <button aria-label="Undo" title="Undo (Ctrl/Cmd+Z)" disabled={!edits.past.length} onClick={() => dispatch({ type: 'undo' })}><Icon name="undo" /></button>
+          <button aria-label="Redo" title="Redo (Shift+Ctrl/Cmd+Z)" disabled={!edits.future.length} onClick={() => dispatch({ type: 'redo' })}><Icon name="redo" /></button>
           {returnRun && <button disabled={unsaved} title={unsaved ? 'Save changes first' : undefined} onClick={() => showRun(returnRun, opened.key)}>Back to run</button>}
           <strong>{opened.name || 'New workflow'}</strong>
           <span className="save-state">{unsaved ? 'Unsaved' : opened.version ? 'Saved' : 'Not saved'}</span>
           <button ref={saveButton} title="Save (Ctrl/Cmd+S)" disabled={pending.includes('save')} onClick={save}>{pending.includes('save') ? 'Saving…' : 'Save'}</button>
           <button ref={enterInputs ? undefined : runButton} type="button" title={(checked.error || runReason || 'Run') + ' (Ctrl/Cmd+Enter)'} className="primary"
             disabled={runDisabled} onClick={() => requestRun()}>
-            {pending.includes('run') ? 'Starting…' : pending.includes('inputs') ? 'Loading inputs…' : 'Run'}
+            <Icon name="run" />{pending.includes('run') ? 'Starting…' : pending.includes('inputs') ? 'Loading inputs…' : 'Run'}
           </button>
         </>}
       </div>
@@ -232,7 +233,7 @@ export function App() {
               {messages.filter(message => message.input === name).map((message, i) => <p className="problem" key={i}>{message.message}</p>)}
             </div>;
           })}</div>
-          <div className="row"><button ref={runButton} type="submit" className="primary" disabled={runDisabled} title={(runReason || 'Start run') + ' (Ctrl/Cmd+Enter)'}>{pending.includes('run') ? 'Starting…' : 'Start run'}</button>
+          <div className="row"><button ref={runButton} type="submit" className="primary" disabled={runDisabled} title={(runReason || 'Start run') + ' (Ctrl/Cmd+Enter)'}><Icon name="run" />{pending.includes('run') ? 'Starting…' : 'Start run'}</button>
             <button type="button" onClick={() => setEnterInputs(false)}>Cancel</button></div>
         </form>}
         {shown?.error && <div className="notice problem">{shown.error}</div>}

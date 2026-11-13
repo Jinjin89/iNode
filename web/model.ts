@@ -165,6 +165,7 @@ export function layout(
   sizes: Record<string, { width?: number; height?: number }> = {}, width = 0,
 ): Record<string, { x: number; y: number }> {
   const input = handle(['inputs']), output = handle(['outputs']);
+  const gap = 32, column = 290 + 72;
   const steps = ids.filter(id => id !== input && id !== output);
   const depth = (id: string, seen: string[] = []): number => seen.includes(id) ? 0 : Math.max(1, ...edges
     .filter(edge => edge.target === id && steps.includes(edge.source))
@@ -172,18 +173,18 @@ export function layout(
   const columns = Object.fromEntries(steps.map(id => [id, depth(id)]));
   columns[input] = 0; columns[output] = Math.max(0, ...Object.values(columns)) + 1;
   const positions = Object.fromEntries(ids.filter(id => stored[id]).map(id => [id, stored[id]]));
-  const left = stored[input]?.x ?? Math.min(0, ...steps.filter(id => stored[id]).map(id => stored[id].x - 390));
-  const right = Math.max(left + columns[output] * 390, ...steps.filter(id => stored[id]).map(id => stored[id].x + 390), steps.length ? 0 : width - 290);
+  const left = stored[input]?.x ?? Math.min(0, ...steps.filter(id => stored[id]).map(id => stored[id].x - column));
+  const right = Math.max(left + columns[output] * column, ...steps.filter(id => stored[id]).map(id => stored[id].x + column), steps.length ? 0 : width - 290);
   for (const id of [...ids].sort((a, b) => columns[a] - columns[b])) {
     if (stored[id]) continue;
-    const x = id === output ? right : left + columns[id] * 390;
+    const x = id === output ? right : left + columns[id] * column;
     let y = 0, collision;
     while ((collision = ids.find(other => positions[other]
-      && x < positions[other].x + (sizes[other]?.width || 290) + 32
-      && x + (sizes[id]?.width || 290) + 32 > positions[other].x
-      && y < positions[other].y + (sizes[other]?.height || 240) + 32
-      && y + (sizes[id]?.height || 240) + 32 > positions[other].y))) {
-      y = positions[collision].y + (sizes[collision]?.height || 240) + 32;
+      && x < positions[other].x + (sizes[other]?.width || 290) + gap
+      && x + (sizes[id]?.width || 290) + gap > positions[other].x
+      && y < positions[other].y + (sizes[other]?.height || 240) + gap
+      && y + (sizes[id]?.height || 240) + gap > positions[other].y))) {
+      y = positions[collision].y + (sizes[collision]?.height || 240) + gap;
     }
     positions[id] = { x, y };
   }
@@ -237,7 +238,14 @@ export function graph(workflow: Workflow, catalog: Description[], record?: Run, 
     { id: handle(['outputs']), type: 'step', position: { x: 0, y: 0 }, data: { kind: 'outputs', ports: workflow.outputs || {}, record } },
   ];
   const positions = layout(nodes.map(node => node.id), edges, workflow.view?.positions, sizes, width);
-  return { nodes: nodes.map(node => ({ ...node, measured: sizes[node.id], position: positions[node.id] })), edges };
+  return { nodes: nodes.map(node => ({ ...node, measured: sizes[node.id], position: positions[node.id] })), edges: edges.map(edge => {
+    const source = nodes.find(node => node.id === edge.source)?.data;
+    const target = nodes.find(node => node.id === edge.target)?.data;
+    const ports = source && ('outputs' in source ? source.outputs : source.ports);
+    const port = ports?.[String(parseHandle(edge.sourceHandle)[1])];
+    return { ...edge, style: { '--type-color': `var(--type-${kind(port) || 'any'}, var(--type-any))` },
+      className: edge.className + (target?.kind === 'step' && target.record?.state === 'running' ? ' running' : '') };
+  }) };
 }
 
 export function runWorkflow(run: Run): Workflow {

@@ -4,6 +4,7 @@ import { Background, Controls, Handle, Position, ReactFlow, ReactFlowProvider, g
 import { add, content, graph, handle, parseHandle, problems, rename, set, type, kind, box, inputs as nodeInputs, reference, connect, emptyReport, emptyValue, expose, move, groups, connectionProblem, unique, workflowDescription } from './model';
 import { call, op } from './client';
 import { Duration, Value } from './Value';
+import { Icon } from './Icon';
 
 export function useReply(operation, args, receive, fail, interval = 0) {
   useEffect(() => {
@@ -74,9 +75,9 @@ export function Field({ port = {}, value, onChange, catalog = [], path = [], soc
   useEffect(() => {
     setDraft(text); setEditing(false); setError(''); control.current?.setCustomValidity('');
   }, [text, shape]);
-  const clear = (value !== undefined || error) && <button type="button" className="quiet clear" title={item ? 'Remove item' : 'Clear input'} onClick={() => {
+  const clear = (value !== undefined || error) && <button type="button" className="quiet clear" aria-label={item ? 'Remove item' : undefined} title={item ? 'Remove item' : 'Clear input'} onClick={() => {
     setEditing(false); setError(''); control.current?.setCustomValidity(''); onChange(undefined);
-  }}>{item ? '×' : shape === 'list' ? 'Clear list' : 'Clear'}</button>;
+  }}>{item ? <Icon name="close" /> : shape === 'list' ? 'Clear list' : 'Clear'}</button>;
   const drop = {
     onDragOver: event => { if (box(port) && event.dataTransfer.types.includes(nodeMime)) { event.preventDefault(); event.stopPropagation(); } },
     onDrop: event => { if (box(port) && event.dataTransfer.getData(nodeMime)) { event.preventDefault(); event.stopPropagation(); onChange({ use: event.dataTransfer.getData(nodeMime) }); } },
@@ -130,11 +131,11 @@ export function Field({ port = {}, value, onChange, catalog = [], path = [], soc
       {entries.map(([name, item]) => <div className={'field-row ' + (list ? 'list-item' : '')} key={name}>
       {!list && <label>{name}<small>{type(item)}</small></label>}
       {child([...path, String(name)], item, values[name], (next, group) => onChange(current => set(current ?? values, [name], next), group), socket, { item: list, children: list && <>
-        <button type="button" title="Move item up" disabled={name === 0} onClick={() => onChange(current => move(current ?? values, name, name - 1))}>↑</button>
-        <button type="button" title="Move item down" disabled={name === values.length - 1} onClick={() => onChange(current => move(current ?? values, name, name + 1))}>↓</button>
+        <button type="button" aria-label="Move item up" title="Move item up" disabled={name === 0} onClick={() => onChange(current => move(current ?? values, name, name - 1))}><Icon name="up" /></button>
+        <button type="button" aria-label="Move item down" title="Move item down" disabled={name === values.length - 1} onClick={() => onChange(current => move(current ?? values, name, name + 1))}><Icon name="down" /></button>
       </> })}
     </div>)}
-      {list && <button type="button" className="quiet" onClick={() => onChange(current => [...(current ?? values), emptyValue(port.item)])}>Add item</button>}
+      {list && <button type="button" className="quiet" onClick={() => onChange(current => [...(current ?? values), emptyValue(port.item)])} title="Add item"><Icon name="add" />Add item</button>}
       {actions}
     </div>;
   }
@@ -191,15 +192,16 @@ function Step({ id, data }) {
   const target = (path, port, flat = true) => <>
     {flat && report.references.filter(ref => ref.path.length > path.length && path.every((part, i) => ref.path[i] === part)).map(ref =>
       <Handle key={handle(ref.path)} type="target" position={Position.Left} id={handle(ref.path)} isConnectable={false} style={{ visibility: 'hidden' }} />)}
-    <Handle type="target" position={Position.Left} id={handle(path)} title={edit ? 'Connect an output here' : undefined} isConnectable={!!edit && !notice?.checking}
+    <Handle type="target" position={Position.Left} data-type={port?.kind} id={handle(path)} title={edit ? 'Connect an output here' : undefined} isConnectable={!!edit && !notice?.checking}
       onClickCapture={event => { if (pendingSource) { event.stopPropagation(); wire(pendingSource, path); } }} />
     {message(path)}
   </>;
-  const source = path => <><Handle type="source" position={Position.Right} id={handle(path)} title={edit ? 'Connect this output to an input' : undefined} isConnectable={!!edit && !notice?.checking && !pendingSource} />{message(path)}</>;
+  const source = (path, port) => <><Handle type="source" position={Position.Right} data-type={port?.kind} id={handle(path)} title={edit ? 'Connect this output to an input' : undefined} isConnectable={!!edit && !notice?.checking && !pendingSource} />{message(path)}</>;
   const field = (port, value, path, children) => <Field port={port} value={value} onChange={edit && ((next, group) => edit(current => set(current, path, next), group))} catalog={catalog} path={path} socket={target} descriptions={report.nodes} onOpen={onOpen}
     issues={at(path.slice(kind === 'step' ? 3 : 0).join('.'))} children={children} />;
   const issues = kind === 'step' ? at() : Object.keys(ports).flatMap(key => at(kind === 'inputs' ? key : 'outputs.' + key));
-  return <article className={'step ' + (kind === 'step' ? record?.state || '' : '') + (issues.length ? ' has-problem' : '')}>
+  const ordered = step?.after?.length || Object.values(workflow.steps || {}).some(other => other.after?.includes(name));
+  return <article data-after={!!ordered} className={'step ' + (kind === 'step' ? record?.state || '' : '') + (issues.length ? ' has-problem' : '')}>
     <header><strong>{kind === 'step' ? name : kind === 'inputs' ? 'Inputs' : 'Outputs'}</strong>{kind === 'step' && record && <span className="step-status"><span className={'state ' + record.state}>{record.state}</span><Duration record={record} /></span>}</header>
     {kind === 'step' ? <>
       <div className="node-name">{typeof step.use === 'string' ? step.use : 'Inline workflow'}<span className="after-source" title={edit ? 'Connect to after' : undefined}>{source([name])}</span>
@@ -213,20 +215,21 @@ function Step({ id, data }) {
       </div>)}
       <Messages items={at('after')} />
       <div className="outputs">{Object.entries(outputs).map(([key, port]) => <div className="port output" key={key}>
-        <span>{key}<small>{type(port)}</small></span>{source([name, key])}
+        <span>{key}<small>{type(port)}</small></span>{source([name, key], port)}
         {edit && <div className="field-actions"><button className="quiet expose" disabled={notice?.checking} onClick={() => propose(current => ({ workflow: expose(current, 'outputs', name, key), path: ['outputs', unique(current.outputs, key)], socket: [name, key] }))}>Give this back</button></div>}
         {record?.outputs && <Value value={record.outputs[key]} port={port} path={[name, key]} onUse={onUse} />}
       </div>)}</div>
       <Messages items={at('use')} />
-    </> : Object.entries(ports).map(([key, port]) => <div className={'port ' + (kind === 'inputs' ? 'output' : '')} key={key}>
+    </> : Object.entries(ports).map(([key, port]) => <div className={'port ' + (kind === 'inputs' ? 'output' : '')} key={key} data-type={kind === 'outputs' ? workflowDescription(report)?.outputs?.[key]?.kind : undefined}>
       <span>{key}<small>{kind === 'inputs' ? type(port) : ''}</small></span>
-      {kind === 'inputs' ? source(['inputs', key]) : record ? <>{target(['outputs', key])}<Value value={record.outputs?.[key]} port={workflowDescription(report)?.outputs?.[key]} /></> : field('any', port, ['outputs', key])}
+      {kind === 'inputs' ? source(['inputs', key], port) : record ? <>{target(['outputs', key])}<Value value={record.outputs?.[key]} port={workflowDescription(report)?.outputs?.[key]} /></> : field('any', port, ['outputs', key])}
       {kind === 'inputs' && record && <><small>{record.source?.inputs[key]?.join('.')}</small><Value value={record.inputs?.[key]} port={port} /></>}
       <Messages items={at(kind === 'inputs' ? key : 'outputs.' + key)} />
     </div>)}
   </article>;
 }
 const nodeTypes = { step: Step };
+const fitOptions = { padding: 0.02 };
 
 function Fit({ ready, nodes, focus }) {
   const fitted = useRef(false);
@@ -234,7 +237,7 @@ function Fit({ ready, nodes, focus }) {
     if (!ready || !state.width || !state.height || fitted.current) return null;
     const measured = [...state.nodeLookup.values()];
     if (nodes.some(node => state.nodeLookup.get(node.id)?.data !== node.data) || !measured.length || measured.some(node => !node.measured?.width || !node.measured?.height)) return null;
-    return getViewportForBounds(getNodesBounds(focus ? measured.filter(node => node.id === focus) : measured), state.width, state.height, state.minZoom, 1, 0.1);
+    return getViewportForBounds(getNodesBounds(focus ? measured.filter(node => node.id === focus) : measured), state.width, state.height, state.minZoom, 1, fitOptions.padding);
   });
   const { setViewport } = useReactFlow();
   useEffect(() => {
@@ -350,12 +353,12 @@ function CanvasView({ workflow, catalog, onEdit, record, onFrom, onCall, onOpen,
           }}
           onConnect={edge => wire(parseHandle(edge.sourceHandle), parseHandle(edge.targetHandle))}
           onEdgeClick={(_, edge) => { if (onEdit) select(edge.id); }}>
-          <Fit key={record?.state + ':' + failed + ':' + !!Object.keys(workflow.steps || {}).length} ready={fresh} nodes={nodes} focus={failed && handle(['steps', failed])} /><Background gap={22} size={1} /><Controls showInteractive={false} />
+          <Fit key={record?.state + ':' + failed + ':' + !!Object.keys(workflow.steps || {}).length} ready={fresh} nodes={nodes} focus={failed && handle(['steps', failed])} /><Background gap={22} size={1} /><Controls showInteractive={false} fitViewOptions={fitOptions} />
         </ReactFlow>
         {onEdit && !Object.keys(workflow.steps || {}).length && <div className="empty-canvas">Click a node on the left or drag it onto the canvas to add a step.</div>}
       </div>
       {selected && <aside className="inspector nowheel">
-        <button className="quiet close" title="Close (Escape)" onClick={() => select('')}>Close</button>
+        <button className="quiet close" title="Close (Escape)" onClick={() => select('')}><Icon name="close" />Close</button>
         {step && <>
           <h3>{name}</h3><p className="inspector-node">{typeof step.use === 'string' ? step.use : 'Inline workflow'}</p>
           {onFrom && <button onClick={() => onFrom(name)}>Run from here</button>}
@@ -363,7 +366,7 @@ function CanvasView({ workflow, catalog, onEdit, record, onFrom, onCall, onOpen,
             <Named label="Step name" name={name} names={Object.keys(workflow.steps)} onChange={fresh && (next => {
               if (next !== name) { onEdit(current => rename(current, 'steps', name, next, report)); select(handle(['steps', next])); }
             })} />
-            <button title="Delete step (Delete / Backspace)" onClick={remove}>Delete step</button>
+            <button title="Delete step (Delete / Backspace)" onClick={remove}><Icon name="delete" />Delete step</button>
           </div>}
           {child ? <>
             <p><span className={'state ' + child.state}>{child.state}</span> <Duration record={child} /></p>{child.error && <p className="problem">{child.error}</p>}
@@ -380,7 +383,7 @@ function CanvasView({ workflow, catalog, onEdit, record, onFrom, onCall, onOpen,
           {record ? <Value value={record[boundary]} port={{ fields: workflowDescription(report)?.[boundary] }} /> : Object.entries(workflow[boundary] || {}).map(([key, port]) => <div className="boundary" key={key}>
             {onEdit ? <div className="row">
               <Named name={key} names={Object.keys(workflow[boundary])} onChange={fresh && (next => { if (next !== key) onEdit(current => rename(current, boundary, key, next, report)); })} />
-              <button title="Delete" onClick={() => onEdit(current => set(current, [boundary, key], undefined))}>×</button>
+              <button aria-label="Delete" title="Delete" onClick={() => onEdit(current => set(current, [boundary, key], undefined))}><Icon name="delete" /></button>
             </div> : <strong>{key}</strong>}
             {boundary === 'inputs' ? <>
               <label>Type<Named label="Input type" name={type(port)} onChange={onEdit && (next =>
@@ -393,10 +396,10 @@ function CanvasView({ workflow, catalog, onEdit, record, onFrom, onCall, onOpen,
             let n = 1;
             while (Object.hasOwn(workflow[boundary] || {}, 'value' + n)) n++;
             onEdit(current => set(current, [boundary, 'value' + n], boundary === 'inputs' ? 'text' : ''));
-          }}>Add {boundary === 'inputs' ? 'input' : 'output'}</button>}
+          }} title={'Add ' + (boundary === 'inputs' ? 'input' : 'output')}><Icon name="add" />Add {boundary === 'inputs' ? 'input' : 'output'}</button>}
         </>}
         {derived.edges.find(edge => edge.id === selected) && onEdit && <>
-          <h3>Connection</h3><button title="Delete connection (Delete / Backspace)" onClick={remove}>Delete connection</button>
+          <h3>Connection</h3><button title="Delete connection (Delete / Backspace)" onClick={remove}><Icon name="delete" />Delete connection</button>
         </>}
       </aside>}
     </div>

@@ -25,7 +25,7 @@ export function When({ catalog, perform, pending, ask, fail, showRun, showRuns }
     if (!report.problems.length) change(op['trigger add'], draft);
   }, [submitted, key, checked]);
   const event = catalog.find(node => node.name === draft.steps.event.use);
-  const runLink = run => run ? <button className="quiet" title={run.id} onClick={() => showRun(run.id)}>
+  const runLink = run => run ? <button className="quiet run-link" title={run.id} onClick={() => showRun(run.id)}>
     <span className={'state ' + run.state}>{run.state}</span><small>{new Date(run.finished || run.started || run.created).toLocaleString()}</small>
   </button> : '—';
   const instruction = step => <>{typeof step.use === 'string' ? step.use : 'Inline workflow'}{Object.keys(step.in || {}).length > 0 && <> ({Object.entries(step.in).map(([name, value]) => name + ' ' + (typeof value === 'string' ? value : JSON.stringify(value))).join(', ')})</>}</>;

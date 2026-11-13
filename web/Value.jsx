@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Icon } from './Icon';
 import { box, canReference, copyText, duration, kind, textPreview, type } from './model';
 
 export function Duration({ record }) {
@@ -26,7 +27,7 @@ export function Value({ value, port = {}, path = [], onUse, level = 0 }) {
       event.preventDefault(); event.stopPropagation();
       try { await navigator.clipboard.writeText(copyText(value)); setCopied('Copied'); }
       catch (error) { setCopied(error.message); }
-    }}>{copied || 'Copy'}</button>
+    }}><Icon name="copy" />{copied || 'Copy'}</button>
     {onUse && canReference(path) && <button type="button" title={'Use =' + path.join('.')} onClick={event => {
       event.preventDefault(); event.stopPropagation(); onUse(path);
     }}>Use this</button>}

@@ -93,6 +93,19 @@ describe('document to graph', () => {
     expect(graph(tiny, catalog, undefined, { ...report, references: [{ ...refs[1], bad: true }] }).edges[0].className).toBe('bad');
     expect(graph(tiny, catalog, undefined, { ...report, references: [{ ...refs[1], unchecked: true }] }).edges[0].className).toBe('unchecked');
   });
+  it('colours lines from their source port structure and shows flow only into a running step', () => {
+    for (const name of ['text', 'number', 'bool', 'list', 'object', 'node', 'secret', 'any']) {
+      const checked = { ...report, nodes: { [JSON.stringify(['steps', 'a'])]: { outputs: { text: { type: name, kind: name } } } } };
+      const run: Run = { node: 'tiny', state: 'running', inputs: {}, outputs: {}, workflow: tiny,
+        steps: { b: { node: 'text.upper', state: 'running', inputs: {}, outputs: {} } } };
+      const result = graph(tiny, catalog, run, checked);
+      const edge = result.edges.find(edge => edge.sourceHandle === handle(['a', 'text']))!;
+      expect(edge.style['--type-color']).toBe(`var(--type-${name}, var(--type-any))`);
+      expect(edge.className).toContain('running');
+      expect(result.edges[0].className).not.toContain('running');
+      expect(result.edges.find(edge => edge.target === handle(['outputs']))!.className).not.toContain('running');
+    }
+  });
   it('shows bound ports supplied by the checker', () => {
     const flow: Workflow = { steps: { m: { use: 'map' } } };
     const nodes = { [JSON.stringify(['steps', 'm'])]: { inputs: { over: 'list of text', do: 'node(text) gives text' }, outputs: { result: 'list of text' } } };
