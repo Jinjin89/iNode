@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { add, box, canReference, connect, connectionProblem, content, copyText, duration, emptyReport, emptyValue, expose, filterRuns, graph, groups, handle, history, inputValues, kind, move, parseHandle, layout, reference, rename, runMessages, runTrail, runWorkflow, set, textPreview, type, workflowDescription, type Workflow, type Description, type Reference, type History, type Run } from './model';
+import { add, box, canReference, connect, connectionProblem, content, copyText, duration, emptyReport, emptyValue, expose, filterRuns, graph, groups, handle, history, inputValues, kind, move, parseHandle, layout, reference, rename, runMessages, runTrail, runWorkflow, reveal, set, textPreview, type, workflowDescription, type Workflow, type Description, type Reference, type History, type Run } from './model';
 
 const catalog: Description[] = [
   { name: 'text.upper', inputs: { text: 'text' }, outputs: { text: 'text' } },
@@ -122,7 +122,7 @@ describe('document to graph', () => {
     expect('record' in result.nodes[0].data && result.nodes[0].data.record?.inputs.text).toBe('hi');
     expect('outputs' in a.data && a.data.outputs).toEqual({ text: 'any' });
     expect(flow).toEqual(set(tiny, ['view', 'positions', handle(['steps', 'a'])], { x: 7, y: 9 }));
-    expect(runWorkflow({ node: 'text.upper', state: 'done', inputs: { text: 'hi' }, outputs: { text: 'HI' } }).steps?.node.use).toBe('text.upper');
+    expect(runWorkflow({ node: 'text.upper', state: 'done', inputs: { text: 'hi' }, outputs: { text: 'HI' } }, catalog).steps?.node.use).toBe('text.upper');
   });
   it('keeps a box type when showing a run', () => {
     const m = graph({ steps: { m: { use: 'map' } } }, catalog, { node: 'tiny', state: 'done', inputs: {}, outputs: {}, workflow: { steps: { m: { use: 'map' } } }, steps: { m: { node: 'map', state: 'done', inputs: { do: { use: 'text.upper' }, over: ['hi'] }, outputs: { result: ['HI'] } } } }).nodes[1];
@@ -133,9 +133,33 @@ describe('document to graph', () => {
     const checked = { ...report, references: refs.map(ref => ({ ...ref, bad: true, unchecked: true })), problems: [{ step: '(inline)/b', input: 'after', message: 'changed today' }],
       nodes: { null: { inputs: { text: { type: 'text', kind: 'text' } } } } };
     const result = graph(tiny, catalog, run, checked);
-    expect(result.edges.map(edge => edge.className)).toEqual(['', '', '', 'after']);
+    expect(result.edges.map(edge => edge.className.trim())).toEqual(['settled', '', '', 'after']);
     expect(result.nodes[0].data).toMatchObject({ ports: checked.nodes.null.inputs, record: run });
     expect(result.nodes.at(-1)?.data).toMatchObject({ record: run });
+  });
+  it('keeps the closed footprint and automatic positions through every run state', () => {
+    const before = graph(tiny, catalog, undefined, report);
+    const geometry = (result: ReturnType<typeof graph>) => result.nodes.map(({ id, position, style }) => ({ id, position, style }));
+    for (const state of ['waiting', 'running', 'done', 'failed']) {
+      const run: Run = { node: 'tiny', workflow: tiny, state, inputs: { text: 'hi' }, outputs: { text: 'HI' },
+        steps: Object.fromEntries(['a', 'b'].map(name => [name, { node: 'text.upper', state, inputs: { text: 'hi' }, outputs: state === 'done' ? { text: 'HI' } : {} }])) };
+      const result = graph(tiny, catalog, run, report);
+      expect(geometry(result)).toEqual(geometry(before));
+      expect(result.edges.filter(edge => edge.className.includes('settled'))).toHaveLength(state === 'done' ? 4 : 0);
+      expect(result.nodes.map(node => node.style['--depth'])).toEqual([0, 1, 2, 3]);
+    }
+    expect(before.nodes[1].style).toMatchObject({ width: 190, height: 96 });
+  });
+  it('does not restore a renamed input from the previous check report', () => {
+    const renamed = rename(tiny, 'inputs', 'text', 'word', report);
+    const checked = { ...report, nodes: { null: { inputs: { text: { type: 'text', kind: 'text' } } } } };
+    expect(graph(renamed, catalog, undefined, checked).nodes[0].data).toMatchObject({ ports: { word: 'text' } });
+    const root = graph(renamed, catalog, undefined, checked).nodes[0].data;
+    expect('ports' in root && Object.keys(root.ports)).toEqual(['word']);
+  });
+  it('keeps a standalone node’s declared outputs visible before it returns', () => {
+    const run: Run = { node: 'text.upper', state: 'running', inputs: { text: 'hi' }, outputs: {} };
+    expect(runWorkflow(run, catalog)).toEqual(runWorkflow({ ...run, state: 'done', outputs: { text: 'HI' } }, catalog));
   });
   it('handles escaped text, identifiers and both port forms', () => {
     expect(parseHandle(handle(['steps', 'a"雪', 'in', 'x']))).toEqual(['steps', 'a"雪', 'in', 'x']);
@@ -169,7 +193,7 @@ describe('running and values', () => {
   });
   it('keeps plain recorded inputs out of a single-node diagram’s binding syntax', () => {
     const record = { ...waiting, inputs: { value: '=node.value' }, outputs: { value: '=node.value' } };
-    expect(runWorkflow(record)).toEqual({ steps: { node: { use: 'tiny' } }, outputs: { value: '=node.value' } });
+    expect(runWorkflow(record, catalog)).toEqual({ steps: { node: { use: 'tiny' } }, outputs: { value: '=node.value' } });
     expect(record.inputs).toEqual({ value: '=node.value' });
   });
   it('projects remembered inputs without treating values as workflow binding syntax', () => {
@@ -300,7 +324,7 @@ describe('canvas building', () => {
 describe('layout', () => {
   const input = handle(['inputs']), output = handle(['outputs']);
   it('puts boundaries on either side and steps by dependency depth, including disconnected steps', () => {
-    const positions = layout([input, 'a', 'b', 'c', output], [{ source: 'a', target: 'c' }], {}, { a: { height: 600 } });
+    const { positions } = layout([input, 'a', 'b', 'c', output], [{ source: 'a', target: 'c' }], {}, { a: { height: 600 } });
     expect(positions[input].x).toBeLessThan(positions.a.x);
     expect(positions.a.x).toBe(positions.b.x);
     expect(positions.b.y).toBeGreaterThanOrEqual(positions.a.y + 600);
@@ -308,20 +332,36 @@ describe('layout', () => {
     expect(positions.c.x).toBeLessThan(positions[output].x);
     expect(positions[input].y).toBe(positions[output].y);
   });
-  it('preserves stored positions and avoids their rectangles with measured heights', () => {
+  it('preserves stored positions and avoids their closed rectangles', () => {
     const pinned = { x: 390, y: 0 };
-    const positions = layout([input, 'a', 'b', output], [], { a: pinned }, { a: { height: 900 } });
+    const { positions } = layout([input, 'a', 'b', output], [], { a: pinned }, { a: { height: 900 } });
     expect(positions.a).toEqual(pinned);
     expect(positions.b.y).toBeGreaterThanOrEqual(900);
     expect(positions[input].x).toBeLessThan(pinned.x);
-    expect(positions[output].x).toBeGreaterThan(pinned.x + 290);
-    const moved = layout([input, 'a', 'b', output], [], { a: { x: -400, y: 20 } });
+    expect(positions[output].x).toBeGreaterThan(pinned.x + 190);
+    const { positions: moved } = layout([input, 'a', 'b', output], [], { a: { x: -400, y: 20 } });
     expect(moved[input].x).toBeLessThan(-400);
   });
+  it('tidies with one ordinary undoable edit and keeps dependency depths for pinned steps', () => {
+    const messy = set(tiny, ['view'], { note: 'kept', positions: { [handle(['steps', 'b'])]: { x: 1, y: 2 } } });
+    const state = history({ present: messy, past: [], future: [] }, { type: 'edit', value: current => set(current, ['view', 'positions'], undefined) });
+    expect(state.present.view).toEqual({ note: 'kept' });
+    expect(state.past).toEqual([messy]);
+    expect(history(state, { type: 'undo' }).present).toEqual(messy);
+    expect(graph(messy, catalog, undefined, report).nodes[2].style['--depth']).toBe(2);
+    expect(graph(state.present, catalog, undefined, report).nodes[2].position.x).toBeGreaterThan(graph(state.present, catalog, undefined, report).nodes[1].position.x);
+  });
+  it('reveals an expanded card with the smallest pan, aligning oversized cards to the frame', () => {
+    const frame = { left: 100, right: 800, top: 200, bottom: 800 };
+    expect(reveal({ left: 120, right: 500, top: 220, bottom: 700 }, frame)).toEqual({ x: 0, y: 0 });
+    expect(reveal({ left: 500, right: 900, top: 700, bottom: 900 }, frame)).toEqual({ x: -116, y: -116 });
+    expect(reveal({ left: 80, right: 380, top: 180, bottom: 680 }, frame)).toEqual({ x: 36, y: 36 });
+    expect(reveal({ left: 120, right: 1000, top: 220, bottom: 1000 }, frame)).toEqual({ x: -4, y: -4 });
+  });
   it('keeps an empty workflow on one line across the available width and tolerates cycles', () => {
-    const positions = layout([input, output], [], {}, {}, 1200);
+    const { positions } = layout([input, output], [], {}, {}, 1200);
     expect(positions[input]).toEqual({ x: 0, y: 0 });
-    expect(positions[output]).toEqual({ x: 910, y: 0 });
-    expect(Object.values(layout(['a', 'b'], [{ source: 'a', target: 'b' }, { source: 'b', target: 'a' }])).every(p => Number.isFinite(p.x))).toBe(true);
+    expect(positions[output]).toEqual({ x: 1010, y: 0 });
+    expect(Object.values(layout(['a', 'b'], [{ source: 'a', target: 'b' }, { source: 'b', target: 'a' }]).positions).every(p => Number.isFinite(p.x))).toBe(true);
   });
 });

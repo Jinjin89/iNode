@@ -23,7 +23,7 @@ A **plugin** is a folder of more nodes.
 ```
 
 ## Try it
-Guide can stay open beside your work.
+Click a step or port row to edit it in place; click empty canvas or press Escape to close it. Guide can stay open beside your work.
 
 **1. Start a project.**
 - Copy `examples/` to your own folder.
@@ -44,10 +44,10 @@ The step returns `HI`. You are now looking at a **run**, a read-only record.
 
 **3. Connect steps.**
 - Add `text.join`.
-- Add a second `text.upper`.
 - In `parts`, click **Add item** twice.
 - Type `Hello` in the first row.
 - Drag a line from the first step's `text` output to the second row's dot.
+- Add a second `text.upper`.
 - Connect `text.join`'s output to the last step's `text` input.
 - Press **Run**.
 - Click a step to see **Received** and **Returned**.
@@ -56,10 +56,9 @@ The last step returns `HELLO HI`.
 
 **4. Make your own node.**
 - Press **Back to editing**.
-- Point at the first step's `text` field.
-- Choose **Ask for this when run**.
-- Point at the last step's `text` output.
-- Choose **Give this back**.
+- Click the first step's `text` row.
+- Point at its field and choose **Ask for this when run**.
+- Click the last step's `text` output row and choose **Give this back**.
 - Press **Save**.
 - Name the workflow `welcome`.
 - Press **Save** again.
@@ -87,7 +86,9 @@ The result has two greetings, one per word.
 **6. Pass on part of a result.**
 You can give back just one item instead of the whole list.
 - Click `many_welcomes` in the run bar to return to the whole run.
-- Point at the first `result` item.
+- Click `map`.
+- Open `result` under **Returned**.
+- Point at its first item.
 - Choose **Use this**.
 - Back in the editor, click the dot beside `result` on the Outputs card.
 - Press **Run**.

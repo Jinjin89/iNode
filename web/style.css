@@ -15,7 +15,7 @@
   --shadow-float: 0 4px 8px #20263008, 0 12px 32px #20263014;
   --running: 0 0 0 2px var(--warning-soft);
   --fast: 140ms; --settle: 180ms; --pulse: 1600ms; --flow: 1200ms; --ease: cubic-bezier(.2, .7, .3, 1);
-  --header-height: 64px; --icon-size: 16px; --socket-size: 18px;
+  --header-height: 64px; --icon-size: 16px;
   font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
   font-size: var(--text-base); line-height: 1.5; color: var(--ink); background: var(--canvas); color-scheme: light;
   -webkit-font-smoothing: antialiased;
@@ -85,7 +85,7 @@ nav { display: flex; gap: var(--space-2); }
 .node-list .node-add { display: block; flex: 1; min-width: 0; border-color: var(--clear); background: var(--clear); text-align: left; padding: var(--space-3); }
 .node-list .node-add[draggable=true] { cursor: grab; }
 .node-list .node-open { margin-top: var(--space-1); padding: var(--space-1) var(--space-2); font-size: var(--text-sm); }
-.node-list button strong { display: block; font-size: var(--text-sm); margin-bottom: var(--space-1); }
+.node-list button strong { display: block; font-size: var(--text-sm); margin-bottom: var(--space-1); overflow-wrap: anywhere; }
 .node-list button small { font-size: var(--text-sm); }
 .node-detail { animation: enter var(--settle) var(--ease); position: absolute; pointer-events: none; left: calc(100% + 8px); top: 12px; width: 285px; max-height: 80vh; overflow: auto; padding: var(--space-5); border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--surface); box-shadow: var(--shadow-float); }
 .node-detail p { color: var(--muted); }
@@ -124,9 +124,10 @@ nav { display: flex; gap: var(--space-2); }
 .inspector .close { float: right; padding: var(--space-1); color: var(--muted); }
 .inspector-node { margin: calc(-1 * var(--space-3)) 0 var(--space-4); color: var(--muted); font-size: var(--text-sm); }
 .call { display: block; width: 100%; margin-top: var(--space-3); text-align: left; overflow-wrap: anywhere; }
-.step { position: relative; width: 290px; border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--surface); box-shadow: var(--shadow-card); }
-.step > header { padding: var(--space-3) var(--space-4); background: var(--surface-hover); border-radius: var(--radius-card) var(--radius-card) 0 0; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
-.step > header > strong { font-size: var(--text-lg); }
+.react-flow__node-step { interpolate-size: allow-keywords; transition: width var(--settle) var(--ease), height var(--settle) var(--ease); }
+.step { position: relative; width: 100%; border: var(--card-border) solid var(--border); border-radius: var(--radius-card); background: var(--surface); box-shadow: var(--shadow-card); transition: border-color var(--fast), box-shadow var(--settle); }
+.step > header { min-height: var(--card-header); padding: var(--space-1) 10px; gap: var(--space-2); background: var(--surface-hover); border-radius: var(--radius-card) var(--radius-card) 0 0; border-bottom: var(--card-border) solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+.step > header > strong { font-size: var(--text-base); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .step:hover { border-color: var(--border-strong); box-shadow: var(--shadow-float); }
 .react-flow__node.selected .step { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); box-shadow: var(--shadow-float); }
 .step.running { animation: breathe var(--pulse) ease-in-out infinite alternate; border-color: var(--warning); box-shadow: var(--running), var(--shadow-card); }
@@ -137,13 +138,58 @@ nav { display: flex; gap: var(--space-2); }
 @keyframes breathe { to { box-shadow: var(--running), var(--shadow-float); } }
 @keyframes enter { from { opacity: 0; transform: translateX(8px); } }
 @keyframes flow { to { stroke-dashoffset: -24; } }
-.step-error { margin: var(--space-2) var(--space-3); }
 .step.done { border-color: var(--success); }
 .step.failed, .step.interrupted, .step.has-problem { border-color: var(--danger); }
-.node-name { padding: var(--space-3) var(--space-3) 0; font-size: var(--text-sm); font-weight: 550; }
-.node-doc { font-size: var(--text-sm); color: var(--muted); padding: 0 var(--space-3); margin-bottom: var(--space-3); }
+.node-name { position: relative; padding: 0 10px; height: var(--card-name); font-size: var(--text-sm); color: var(--muted); font-weight: normal; }
+.node-name > span:first-child { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.node-doc { font-size: var(--text-sm); color: var(--muted); margin: var(--space-2) 0; }
 .port { position: relative; padding: var(--space-2) var(--space-3); font-size: var(--text-sm); }
 .port > label, .port > span { display: block; font-weight: 550; margin-bottom: var(--space-1); }
+/* Layout uses the closed footprint even while the selected node grows. */
+.step.closed { height: 100%; }
+.step.closed > header { height: var(--card-header); }
+.step.closed .port { height: var(--card-row); display: flex; align-items: center; gap: var(--space-2); padding: 0 var(--card-padding); }
+.step.closed .port > :is(label, span):not(.value-preview) { max-width: 48%; margin: 0; flex: 0 0 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.step.closed .output > span { order: 2; }
+.step.closed .output .value-preview { text-align: right; }
+.step.closed .outputs { border-top: 0; border-radius: 0; }
+.step.closed .outputs .port:first-child { border-top: var(--card-border) solid var(--border); }
+.step.closed .field { min-height: 0; height: var(--card-row); flex-wrap: nowrap; }
+.step.closed .port .field-slot { position: static; }
+.step.closed .summary { position: static; }
+.step.closed .summary > .react-flow__handle { left: calc(var(--card-socket) / -2); }
+.step.closed .output > .react-flow__handle { right: calc(var(--card-socket) / -2); }
+.step.closed .react-flow__handle::before { inset: -3px -8px; }
+.step.closed .field-slot, .step.closed .port > .value-preview { flex: 1; min-width: 0; }
+.step.closed .summary.linked { color: var(--muted); }
+.value-preview { display: block; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: var(--text-sm); font-weight: normal; }
+.problem-mark { margin-left: var(--space-1); color: var(--danger); }
+.step-status { min-width: 0; }
+.step-status .state { background: none; padding: 0; font-size: 11px; }
+.step-status .duration { font-size: 11px; }
+.step.open { display: flex; flex-direction: column; box-shadow: var(--shadow-float); height: auto; animation: unfold var(--settle) var(--ease); }
+.step.open > header { padding: var(--space-2) var(--card-padding); flex: 0 0 auto; }
+.step.open > header > input { width: 0; flex: 1; border-color: var(--clear); padding: var(--space-1) 0; font-size: var(--text-lg); font-weight: 650; background: none; }
+.step.open > header > input:focus { border-color: var(--border-strong); outline: none; }
+.step.open > header > button { padding: var(--space-1); }
+.step.open .step-body { padding: 0 var(--card-padding) var(--space-3); }
+.step.open .node-name { padding: var(--space-1) 0; height: auto; overflow: visible; }
+.step.open .node-name > :is(.after-target, .after-source) { transform: translateX(-10px); }
+.step.open .node-name > .after-source { transform: translateX(10px); }
+.step.open .field-slot > :is(.field, .box, .field-fields) { position: static; }
+.step.open .field-slot > :is(.field, .box, .field-fields) > .react-flow__handle { left: calc(-1 * var(--card-padding) - var(--card-socket) / 2); }
+.step.open .output > .react-flow__handle { right: calc(-1 * var(--card-padding) - var(--card-socket) / 2); }
+.step.open .port { padding: var(--space-2) 0; }
+.step.open .port > label { display: flex; justify-content: space-between; gap: var(--space-2); }
+.step.open .port > label > small { text-align: right; }
+.step.open .outputs { margin-top: var(--space-3); }
+.step.open .outputs .row { margin-bottom: var(--space-2); }
+.step.open .port > label > input { width: 70%; }
+.step.open .field-actions { top: auto; bottom: calc(100% - 2px); }
+.step.open .add-port { margin: var(--space-2) 0; }
+.step[data-state=done] .outputs .port { animation: arrive calc(var(--settle) * 3) var(--ease); animation-delay: min(calc(var(--depth) * 60ms), 400ms); }
+@keyframes unfold { from { opacity: .6; } }
+@keyframes arrive { from { background: var(--accent-soft); box-shadow: inset 3px 0 var(--accent); } to { background: transparent; box-shadow: inset 0 0 transparent; } }
 .field { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); min-height: 27px; }
 .field input, .field select { width: 100%; }
 .field :is(input, select, textarea) { font-size: var(--text-base); }
@@ -157,8 +203,9 @@ nav { display: flex; gap: var(--space-2); }
 .field-actions:empty { display: none; }
 .field-actions button, .show-all { padding: var(--space-1) var(--space-1); font-size: var(--text-sm); white-space: nowrap; }
 .field-actions .expose { color: var(--muted); }
-:where(.port, .field, .box, .field-fields, .value-row):is(:hover, :focus-within) > .field-actions,
-:where(.port, .field, .box, .field-fields):is(:hover, :focus-within) > :where(.field, .box, .field-fields, .value-row) > .field-actions { opacity: 1; pointer-events: auto; }
+:where(.port, .field-slot, .field, .box, .field-fields, .value-row):is(:hover, :focus-within) > .field-actions,
+.port:is(:hover, :focus-within) > .field-slot > :where(.field, .box, .field-fields) > .field-actions,
+:where(.port, .field, .box, .field-fields):is(:hover, :focus-within) > :where(.field-slot, .field, .box, .field-fields, .value-row) > .field-actions { opacity: 1; pointer-events: auto; }
 :is(.field, .box, .field-fields):has(:where(.field, .box, .field-fields):is(:hover, :focus-within)) > .field-actions,
 .returned-value:has(.value-children .value-row:is(:hover, :focus-within)) > details > summary > .field-actions { opacity: 0; pointer-events: none; }
 .list-item > .field { flex-wrap: nowrap; }
@@ -181,13 +228,13 @@ nav { display: flex; gap: var(--space-2); }
 .run-outputs { max-height: 220px; }
 .use-value { justify-content: flex-start; gap: var(--space-2); background: var(--surface-soft); }
 .use-value button { margin-left: auto; }
-.after-source { float: right; color: var(--muted); position: relative; font-size: var(--text-sm); margin-right: var(--space-2); width: 10px; height: 10px; }
-.after-source .react-flow__handle { right: -20px; }
-.after-target { position: absolute; left: 0; top: 61px; }
-.react-flow__handle { background: var(--type-color, var(--type-any)); border: 2px solid var(--surface); width: var(--socket-size); height: var(--socket-size); transition: width var(--fast), height var(--fast), opacity var(--fast); }
+.after-source { position: absolute; right: 0; top: 50%; }
+.after-source .react-flow__handle { right: -4px; }
+.after-target { position: absolute; left: 0; top: 50%; }
+.react-flow__handle { background: var(--type-color, var(--type-any)); border: 2px solid var(--surface); width: var(--card-socket); height: var(--card-socket); transition: width var(--fast), height var(--fast), opacity var(--fast); }
 .react-flow__handle::before { content: ''; position: absolute; inset: -8px; }
-.react-flow__handle:hover { width: 20px; height: 20px; }
-.field > .react-flow__handle, .box > .react-flow__handle, .field-fields > .react-flow__handle { left: -18px; }
+.react-flow__handle:hover { width: calc(var(--card-socket) + 2px); height: calc(var(--card-socket) + 2px); }
+.field > .react-flow__handle, .box > .react-flow__handle, .field-fields > .react-flow__handle { left: calc(-1 * var(--card-socket)); }
 .box > .react-flow__handle, .field-fields > .react-flow__handle { top: 0; }
 .output > .react-flow__handle { right: -6px; }
 .after-target .react-flow__handle, .after-source .react-flow__handle { width: 8px; height: 8px; background: var(--surface); border: 1px solid var(--muted); border-radius: var(--radius-sm); opacity: 0; pointer-events: none; }
@@ -195,6 +242,7 @@ nav { display: flex; gap: var(--space-2); }
 .react-flow__node.selected :is(.after-target, .after-source) .react-flow__handle,
 .react-flow:has(.connectingfrom, .clickconnecting) :is(.after-target, .after-source) .react-flow__handle { opacity: 1; pointer-events: all; }
 .react-flow__edge-path { stroke: var(--type-color, var(--type-any)); stroke-width: 2; }
+.react-flow__edge.settled:not(.running) .react-flow__edge-path { stroke-width: 2.5; }
 .react-flow__edge.after .react-flow__edge-path { stroke: var(--muted); stroke-dasharray: 7 5; }
 .react-flow__edge.bad .react-flow__edge-path { stroke: var(--danger); stroke-width: 3; stroke-dasharray: 9 3 2 3; }
 .react-flow__edge.unchecked .react-flow__edge-path { stroke-dasharray: 3 3; }
@@ -227,9 +275,6 @@ nav { display: flex; gap: var(--space-2); }
 .notice button { margin-left: var(--space-4); }
 .row { display: flex; gap: var(--space-2); align-items: center; }
 .row input { flex: 1; min-width: 0; }
-.boundary { padding: var(--space-3) 0; border-bottom: 1px solid var(--border); }
-.boundary > label { margin-top: var(--space-3); }
-.boundary label > input { width: 100%; margin-top: var(--space-1); }
 .state { padding: var(--space-1) var(--space-2); background: var(--surface-hover); border-radius: var(--radius-sm); font-size: var(--text-sm); }
 .state.done { color: var(--success); background: var(--success-soft); }
 .state.failed, .state.interrupted { color: var(--danger); background: var(--danger-soft); }
@@ -270,11 +315,13 @@ dialog::backdrop { background: var(--backdrop); }
 .run-inputs { background: var(--surface); width: 440px; max-height: 90vh; overflow: auto; padding: var(--space-6); border-radius: var(--radius-dialog); box-shadow: var(--shadow-float); }
 .run-inputs .port { padding: var(--space-2) 0; }
 .run-inputs .row { justify-content: flex-end; margin-top: var(--space-5); }
-@media (max-width: 1200px) { .catalog { width: 180px; flex-basis: 180px; } .brand span { display: none; } .inspector { flex-basis: 270px; } .toolbar { flex-wrap: wrap; } .app-header { gap: var(--space-5); padding: 0 var(--space-4); } .guide { flex-basis: 300px; } th, td { padding: var(--space-3); } .trigger-steps { flex-wrap: wrap; } .trigger-steps > section { flex-basis: 240px; } }
+@media (max-width: 1200px) { .node-entry { flex-direction: column; } .node-list .node-add { width: 100%; } .node-list .node-open { align-self: flex-end; margin: 0 var(--space-2) var(--space-2); } .catalog { width: 180px; flex-basis: 180px; } .brand span { display: none; } .inspector { flex-basis: 270px; } .toolbar { flex-wrap: wrap; } .app-header { gap: var(--space-5); padding: 0 var(--space-4); } .guide { flex-basis: 300px; } th, td { padding: var(--space-3); } .trigger-steps { flex-wrap: wrap; } .trigger-steps > section { flex-basis: 240px; } }
 
 .react-flow { --xy-background-color: var(--canvas); --xy-background-pattern-dots-color-default: var(--grid); --xy-controls-button-background-color: var(--surface); --xy-controls-button-background-color-hover: var(--surface-hover); --xy-controls-button-border-color: var(--border); }
 .react-flow__controls { box-shadow: var(--shadow-card); border-radius: var(--radius); overflow: hidden; }
 .react-flow__controls-button { color: var(--muted); }
+.react-flow__controls-button:disabled { opacity: .4; }
+.react-flow__controls-button.layout { width: auto; padding: 0 var(--space-3); font-size: var(--text-sm); }
 .react-flow__controls-button:hover { color: var(--ink); }
 .react-flow__attribution a { color: inherit; }
 .react-flow__attribution { font-size: var(--text-sm); color: var(--muted); background: var(--clear); padding: 0 var(--space-1); }

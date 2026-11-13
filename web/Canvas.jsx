@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Background, Controls, Handle, Position, ReactFlow, ReactFlowProvider, getNodesBounds, getViewportForBounds, useStore, useReactFlow, useUpdateNodeInternals } from '@xyflow/react';
-import { add, content, graph, handle, parseHandle, problems, rename, set, type, kind, box, inputs as nodeInputs, reference, connect, emptyReport, emptyValue, expose, move, groups, connectionProblem, unique, workflowDescription } from './model';
+import { Background, ControlButton, Controls, Handle, Position, ReactFlow, ReactFlowProvider, getNodesBounds, getViewportForBounds, useStore, useReactFlow, useUpdateNodeInternals } from '@xyflow/react';
+import { add, content, graph, handle, parseHandle, problems, rename, set, type, kind, box, inputs as nodeInputs, reference, connect, emptyReport, emptyValue, expose, move, groups, connectionProblem, unique, workflowDescription, nodeName, reveal, cardGeometry } from './model';
 import { call, op } from './client';
 import { Duration, Value } from './Value';
 import { Icon } from './Icon';
@@ -39,7 +39,7 @@ export function NodeList({ catalog, onAdd, onOpen, opening }) {
   const info = described?.name === detail?.name ? described : detail;
   return <aside className="catalog" onMouseLeave={() => showDetail(null)} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) showDetail(null); }}>
     <h2>Nodes</h2><input aria-label="Find a node" placeholder="Find a node…" value={search} onChange={event => setSearch(event.target.value)} />
-    <p>Click a node to add a step, or drag it onto the canvas or a box.</p>
+    <p>{onAdd ? 'Click a node to add a step, or drag it onto the canvas or a box.' : 'Inspect a node’s inputs and outputs here, or open a workflow to edit it.'}</p>
     <div className="node-list">{groups(catalog, search).map(([group, nodes]) => <section key={group}><h3>{group}</h3>{nodes.map(node =>
       <div className="node-entry" key={node.name} onMouseEnter={() => showDetail(node)} onFocus={() => showDetail(node)}>
         <button type="button" className="node-add" disabled={!onAdd} title={'Add a step using ' + node.name} draggable={!!onAdd}
@@ -58,7 +58,7 @@ export function NodeList({ catalog, onAdd, onOpen, opening }) {
   </aside>;
 }
 
-export function Field({ port = {}, value, onChange, catalog = [], path = [], socket, descriptions = {}, issues = [], references = true, onOpen, children, item = false, placeholder, required = false }) {
+export function Field({ port = {}, value, onChange, catalog = [], path = [], socket, descriptions = {}, issues = [], references = true, onOpen, children, item = false, placeholder, required = false, closed = false }) {
   const shape = kind(port);
   const json = !['text', 'secret', 'number', 'bool', 'node'].includes(shape);
   const fallback = port?.default;
@@ -71,7 +71,7 @@ export function Field({ port = {}, value, onChange, catalog = [], path = [], soc
   const control = useRef(null);
   const shown = references && typeof shownValue === 'string' && shownValue.startsWith('==') ? shownValue.slice(1) : shownValue;
   const text = shown === undefined ? '' : json ? JSON.stringify(shown, null, 2) : String(shown);
-  useReply(shape === 'secret' && onChange && op['secret list'], [], setSecrets, setError);
+  useReply(shape === 'secret' && onChange && !closed && op['secret list'], [], setSecrets, setError);
   useEffect(() => {
     setDraft(text); setEditing(false); setError(''); control.current?.setCustomValidity('');
   }, [text, shape]);
@@ -89,8 +89,10 @@ export function Field({ port = {}, value, onChange, catalog = [], path = [], soc
       <button type="button" className="quiet" onClick={() => onChange(emptyValue(port))}>Use empty {shape}</button>}
     {clear}
   </div>;
-  const handle = socket?.(path, port, !onChange || !structured && !box(port));
-  if (!onChange) return <div className="field">{handle}<Value value={value} port={port} /></div>;
+  const handle = socket?.(path, port, closed || !onChange || !structured && !box(port));
+  if (closed) return <div className={'field summary nodrag' + (references && reference(shownValue) ? ' linked' : '')} {...drop}>
+    {handle}<Value value={onChange ? shown : value} port={port} compact />
+  </div>;
   if (references && reference(shownValue)) return <div className={'field linked ' + (box(port) ? 'box' : '')} {...drop}>{handle}<code>{shownValue}</code>{actions}</div>;
   const child = (path, item, data, change, childSocket, props = {}) => <Field port={item} value={data} onChange={change} catalog={catalog}
     path={path} socket={childSocket} descriptions={descriptions} references={references} onOpen={onOpen} {...props} />;
@@ -182,10 +184,17 @@ export function Messages({ items }) {
   return items.map((problem, i) => <p className="problem" key={i}>{problem.input && <strong>{problem.input}: </strong>}{problem.message}</p>);
 }
 
-function Step({ id, data }) {
-  const { kind, name, step, info, ports, inputs, outputs, record, workflow, catalog, edit, report, scope, onOpen, notice, propose, onUse, pendingSource, wire } = data;
-  const update = useUpdateNodeInternals();
-  useEffect(() => { update(id); }, [id, workflow, record, report, update]);
+function Step({ id, data, width, height }) {
+  const { kind, name, step, info, ports, inputs, outputs, record, workflow, catalog, edit, report, scope, onOpen, notice, propose, pendingSource, wire, open, active, focus, choose, remove, ensureVisible, fresh } = data;
+  const card = useRef(null), update = useUpdateNodeInternals();
+  useEffect(() => { update(id); }, [id, workflow, record, report, open, update]);
+  useLayoutEffect(() => { if (active) ensureVisible(card.current.querySelector(':focus') || card.current); }, [active, width, height, ensureVisible]);
+  useEffect(() => {
+    if (!open) return;
+    const control = focus && card.current.querySelector('[data-port=' + JSON.stringify(handle(focus)) + ']')?.querySelector('input, textarea, select, button');
+    (control || card.current).focus({ preventScroll: true });
+    ensureVisible(control || card.current);
+  }, [open, focus, ensureVisible]);
   const where = kind === 'step' ? scope + '/' + name : scope;
   const at = input => edit ? problems(report, where, input) : [];
   const message = path => notice?.path === handle(path) && <span className="socket-message" role="alert">{notice.message}</span>;
@@ -197,62 +206,69 @@ function Step({ id, data }) {
     {message(path)}
   </>;
   const source = (path, port) => <><Handle type="source" position={Position.Right} data-type={port?.kind} id={handle(path)} title={edit ? 'Connect this output to an input' : undefined} isConnectable={!!edit && !notice?.checking && !pendingSource} />{message(path)}</>;
-  const field = (port, value, path, children) => <Field port={port} value={value} onChange={edit && ((next, group) => edit(current => set(current, path, next), group))} catalog={catalog} path={path} socket={target} descriptions={report.nodes} onOpen={onOpen}
-    issues={at(path.slice(kind === 'step' ? 3 : 0).join('.'))} children={children} />;
+  const field = (port, value, path, children) => <div className="field-slot" data-port={handle(path)}><Field closed={!open} references={!record} port={port} value={value} onChange={edit && ((next, group) => edit(current => set(current, path, next), group))} catalog={catalog} path={path} socket={target} descriptions={report.nodes} onOpen={onOpen}
+    issues={at(path.slice(kind === 'step' ? 3 : 0).join('.'))} children={children} /></div>;
+  const click = path => event => { if (edit && !open && !event.target.closest('.react-flow__handle')) { event.stopPropagation(); choose({ id, field: path }); } };
   const issues = kind === 'step' ? at() : Object.keys(ports).flatMap(key => at(kind === 'inputs' ? key : 'outputs.' + key));
   const ordered = step?.after?.length || Object.values(workflow.steps || {}).some(other => other.after?.includes(name));
-  return <article data-after={!!ordered} className={'step ' + (kind === 'step' ? record?.state || '' : '') + (issues.length ? ' has-problem' : '')}>
-    <header><strong>{kind === 'step' ? name : kind === 'inputs' ? 'Inputs' : 'Outputs'}</strong>{kind === 'step' && record && <span className="step-status"><span className={'state ' + record.state}>{record.state}</span><Duration record={record} /></span>}</header>
+  const title = kind === 'step' ? name : kind === 'inputs' ? 'Inputs' : 'Outputs';
+  const problem = record?.error || at('use').map(problem => problem.message).join('\n');
+  return <article ref={card} tabIndex={-1} title={problem || undefined} data-after={!!ordered} data-state={record?.state} className={'step ' + (open ? 'open ' : 'closed ') + (kind === 'step' ? record?.state || '' : '') + (issues.length ? ' has-problem' : '')}>
+    <header>{open && kind === 'step' ? <>
+      <Named label="Step name" name={name} names={Object.keys(workflow.steps)} onChange={edit && fresh && (next => {
+        if (next !== name && choose({ id: handle(['steps', next]) })) edit(current => rename(current, 'steps', name, next, report));
+      })} /><button className="quiet nodrag" aria-label="Delete step" title="Delete step (Delete / Backspace)" onClick={remove}><Icon name="delete" /></button>
+    </> : <strong title={problem || title}>{title}</strong>}{kind === 'step' && record && <span className="step-status"><span className={'state ' + record.state}>{record.state}</span><Duration record={record} /></span>}</header>
+    <div className="step-body">
     {kind === 'step' ? <>
-      <div className="node-name">{typeof step.use === 'string' ? step.use : 'Inline workflow'}<span className="after-source" title={edit ? 'Connect to after' : undefined}>{source([name])}</span>
+      <div className="node-name"><span title={nodeName(step.use)}>{nodeName(step.use)}</span><span className="after-source" title={edit ? 'Connect to after' : undefined}>{source([name])}</span>
         <span className="after-target" title={edit ? 'Run after another step' : undefined}>{target(['steps', name, 'after'])}</span></div>
-      <p className="node-doc">{info.doc}</p>
-      {record?.error && <p className="problem step-error">{record.error}</p>}
-      {Object.entries(inputs).map(([key, port]) => <div className="port" key={key}>
-        <label>{key}<small>{type(port)}</small></label>
-        {field(port, record ? record.inputs?.[key] : step.in?.[key], ['steps', name, 'in', key], edit && <button className="quiet expose" disabled={notice?.checking} onClick={() => propose(current => ({ workflow: expose(current, 'inputs', name, key, port), path: ['steps', name, 'in', key] }))}>Ask for this when run</button>)}
-        <Messages items={at(key)} />
+      {open && <p className="node-doc">{info.doc}</p>}
+      {Object.entries(inputs).map(([key, port]) => <div className={'port ' + (at(key).length ? 'has-problem' : '')} key={key} title={at(key).map(problem => problem.message).join('\n') || type(port)} onClickCapture={click(['steps', name, 'in', key])}>
+        <label>{key}{open && <small>{type(port)}</small>}{!open && at(key).length > 0 && <span className="problem-mark">!</span>}</label>
+        {field(port, record ? record.inputs?.[key] : step.in?.[key], ['steps', name, 'in', key], edit && open && <button className="quiet expose" disabled={notice?.checking} onClick={() => propose(current => ({ workflow: expose(current, 'inputs', name, key, port), path: ['steps', name, 'in', key] }))}>Ask for this when run</button>)}
+        {open && <Messages items={at(key)} />}
       </div>)}
-      <Messages items={at('after')} />
-      <div className="outputs">{Object.entries(outputs).map(([key, port]) => <div className="port output" key={key}>
-        <span>{key}<small>{type(port)}</small></span>{source([name, key], port)}
-        {edit && <div className="field-actions"><button className="quiet expose" disabled={notice?.checking} onClick={() => propose(current => ({ workflow: expose(current, 'outputs', name, key), path: ['outputs', unique(current.outputs, key)], socket: [name, key] }))}>Give this back</button></div>}
-        {record?.outputs && <Value value={record.outputs[key]} port={port} path={[name, key]} onUse={onUse} />}
+      {open && <Messages items={at('after')} />}
+      <div className="outputs">{Object.entries(outputs).map(([key, port]) => <div className="port output" key={key} onClickCapture={click(['outputs', key])}>
+        <span>{key}{open && <small>{type(port)}</small>}</span>{source([name, key], port)}
+        <div className="field-slot" data-port={handle(['outputs', key])}>{open && edit ? <div className="field-actions"><button className="quiet expose" disabled={notice?.checking} onClick={() => propose(current => ({ workflow: expose(current, 'outputs', name, key), path: ['outputs', unique(current.outputs, key)], socket: [name, key] }))}>Give this back</button></div> : <Value value={record?.outputs?.[key]} port={port} compact />}</div>
       </div>)}</div>
-      <Messages items={at('use')} />
-    </> : Object.entries(ports).map(([key, port]) => <div className={'port ' + (kind === 'inputs' ? 'output' : '')} key={key} data-type={kind === 'outputs' ? workflowDescription(report)?.outputs?.[key]?.kind : undefined}>
-      <span>{key}<small>{kind === 'inputs' ? type(port) : ''}</small></span>
-      {kind === 'inputs' ? source(['inputs', key], port) : record ? <>{target(['outputs', key])}<Value value={record.outputs?.[key]} port={workflowDescription(report)?.outputs?.[key]} /></> : field('any', port, ['outputs', key])}
-      {kind === 'inputs' && record && <><small>{record.source?.inputs[key]?.join('.')}</small><Value value={record.inputs?.[key]} port={port} /></>}
-      <Messages items={at(kind === 'inputs' ? key : 'outputs.' + key)} />
-    </div>)}
+    </> : <div className={kind === 'outputs' ? 'outputs' : undefined}>{Object.entries(ports).map(([key, port]) => <div className={'port ' + (kind === 'inputs' ? 'output' : '')} key={key} title={kind === 'inputs' && record?.source?.inputs[key] ? 'Copied from =' + record.source.inputs[key].join('.') : undefined} data-type={kind === 'outputs' ? workflowDescription(report)?.outputs?.[key]?.kind : undefined} onClickCapture={click(kind === 'inputs' ? ['inputs', key, 'default'] : ['outputs', key])}>
+      {open ? <>
+        <div className="row"><Named name={key} names={Object.keys(workflow[kind])} onChange={fresh && (next => { if (next !== key && choose({ id })) edit(current => rename(current, kind, key, next, report)); })} />
+          <button className="nodrag" aria-label="Delete" title="Delete" onClick={() => edit(current => set(current, [kind, key], undefined))}><Icon name="delete" /></button></div>
+        {kind === 'inputs' && <label>Type<Named label="Input type" name={type(port)} onChange={next => edit(current => set(current, ['inputs', key], declaration => typeof declaration === 'object' ? { ...declaration, type: next } : next))} /></label>}
+      </> : <span>{key}</span>}
+      {kind === 'inputs' ? <>{source(['inputs', key], port)}<div className="field-slot" data-port={handle(['inputs', key, 'default'])}>
+        {open && <label>Default</label>}<Field closed={!open} port={port} value={record ? record.inputs?.[key] : workflow.inputs?.[key]?.default} onChange={edit && ((next, group) => edit(current => set(current, ['inputs', key], declaration => next === undefined ? { type: type(declaration) } : { type: type(declaration), default: set(declaration?.default, [], next) }), group))} catalog={catalog} references={false} />
+      </div></> : record ? <>{target(['outputs', key])}<Value value={record.outputs?.[key]} port={workflowDescription(report)?.outputs?.[key]} compact /></> : field('any', port, ['outputs', key])}
+      {open && <Messages items={at(kind === 'inputs' ? key : 'outputs.' + key)} />}
+    </div>)}{open && <button className="add-port nodrag" onClick={() => edit(current => set(current, [kind, unique(current[kind], 'value')], kind === 'inputs' ? 'text' : ''))}><Icon name="add" />Add {kind === 'inputs' ? 'input' : 'output'}</button>}</div>}
+    </div>
   </article>;
 }
 const nodeTypes = { step: Step };
+const cardStyle = Object.fromEntries(Object.entries(cardGeometry).map(([name, value]) => ['--card-' + name, value + 'px']));
 const fitOptions = { padding: 0.02 };
+const minZoom = 0.15;
 
-function Fit({ ready, nodes, focus }) {
+function Fit({ ready, nodes, width, height }) {
   const fitted = useRef(false);
-  const frame = useStore(state => {
-    if (!ready || !state.width || !state.height || fitted.current) return null;
-    const measured = [...state.nodeLookup.values()];
-    if (nodes.some(node => state.nodeLookup.get(node.id)?.data !== node.data) || !measured.length || measured.some(node => !node.measured?.width || !node.measured?.height)) return null;
-    return getViewportForBounds(getNodesBounds(focus ? measured.filter(node => node.id === focus) : measured), state.width, state.height, state.minZoom, 1, fitOptions.padding);
-  });
   const { setViewport } = useReactFlow();
   useEffect(() => {
-    if (frame && !fitted.current) {
+    if (!fitted.current && ready && width && height) {
       fitted.current = true;
-      setViewport(frame);
+      setViewport(getViewportForBounds(getNodesBounds(nodes), width, height, minZoom, 1, fitOptions.padding));
     }
-  }, [frame, setViewport]);
+  }, [ready, nodes, width, height, setViewport]);
   return null;
 }
 
 function Named({ name, onChange, names = [], label = 'Name' }) {
   const [draft, change] = useState(name);
   useEffect(() => change(name), [name]);
-  return <input aria-label={label} value={draft} data-draft={draft !== name} disabled={!onChange}
+  return <input className="nodrag" aria-label={label} value={draft} data-draft={draft !== name} disabled={!onChange}
     onChange={event => { event.target.setCustomValidity(''); change(event.target.value); }}
     onBlur={event => {
       if (draft !== name && names.includes(draft)) {
@@ -267,9 +283,10 @@ export function Canvas(props) {
 }
 
 function CanvasView({ workflow, catalog, onEdit, record, onFrom, onCall, onOpen, opening, onCheck, onUse, pendingSource, onConnected, scope = '(inline)' }) {
-  const [selected, select] = useState('');
+  const [selected, select] = useState({});
+  const [fitRequest, requestFit] = useState(0);
   const [notice, setNotice] = useState(null);
-  const canvas = useRef(null), drag = useRef({}), latest = useRef({ workflow, onEdit }), connecting = useRef(0);
+  const canvas = useRef(null), frame = useRef(null), drag = useRef({}), latest = useRef({ workflow, onEdit }), connecting = useRef(0);
   latest.current = { workflow, onEdit };
   const flow = useReactFlow();
   useEffect(() => () => { connecting.current++; }, []);
@@ -288,24 +305,44 @@ function CanvasView({ workflow, catalog, onEdit, record, onFrom, onCall, onOpen,
   const width = useStore(state => state.width);
   const sizes = useStore(state => Object.fromEntries([...state.nodeLookup].map(([id, node]) => [id, node.measured])),
     (a, b) => Object.keys(a).length === Object.keys(b).length && Object.keys(a).every(id => a[id]?.width === b[id]?.width && a[id]?.height === b[id]?.height));
-  const derived = graph(workflow, catalog, record, report, scope, sizes, width);
+  const height = useStore(state => state.height);
+  const derived = graph(workflow, catalog, record, report, scope, width);
+  const ensureVisible = useCallback(element => {
+    const shift = reveal(element.getBoundingClientRect(), canvas.current.querySelector('.drawing').getBoundingClientRect());
+    if (shift.x || shift.y) { const view = flow.getViewport(); flow.setViewport({ ...view, x: view.x + shift.x, y: view.y + shift.y }); }
+  }, [flow]);
+  const choose = choice => {
+    document.activeElement?.blur();
+    const invalid = canvas.current.querySelector('.step.open :invalid');
+    if (invalid) { invalid.reportValidity(); return false; }
+    select(choice); return true;
+  };
+  useLayoutEffect(() => {
+    const box = canvas.current.querySelector('.drawing').getBoundingClientRect(), view = flow.getViewport();
+    if (frame.current) {
+      const x = frame.current.left - box.left, y = frame.current.top - box.top;
+      if (x || y) flow.setViewport({ ...view, x: view.x + x, y: view.y + y });
+    }
+    frame.current = box;
+  });
+  useEffect(() => { select({}); }, [record?.id]);
   const failed = Object.keys(records).find(name => records[name].state === 'failed');
   useEffect(() => {
-    if (failed) select(handle(['steps', failed]));
+    if (failed) select({ id: handle(['steps', failed]) });
   }, [failed, record?.state]);
-  const selection = selected ? parseHandle(selected) : [];
+  const selection = selected.id ? parseHandle(selected.id) : [];
   const name = selection[0] === 'steps' && selection.length === 2 ? selection[1] : '';
   const step = workflow.steps?.[name];
   const child = records[name];
   const boundary = selection.length === 1 ? selection[0] : '';
-  const remove = () => { onEdit(current => set(current, selection, undefined)); select(''); };
+  const remove = () => { onEdit(current => set(current, selection, undefined)); select({}); };
   useEffect(() => {
     const key = event => {
       if (event.defaultPrevented || event.target.closest('dialog') !== canvas.current.closest('dialog')) return;
       if (event.key === 'Escape' && pendingSource) { onConnected(); event.preventDefault(); return; }
-      if (event.key === 'Escape' && selected) { select(''); event.preventDefault(); }
+      if (event.key === 'Escape' && selected.id) { choose({}); event.preventDefault(); }
       if (onEdit && !event.target.closest('input, textarea, select, [contenteditable]') && ['Delete', 'Backspace'].includes(event.key)
-        && (step || derived.edges.some(edge => edge.id === selected))) { event.preventDefault(); remove(); }
+        && (step || derived.edges.some(edge => edge.id === selected.id))) { event.preventDefault(); remove(); }
     };
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
@@ -313,9 +350,10 @@ function CanvasView({ workflow, catalog, onEdit, record, onFrom, onCall, onOpen,
   const addStep = (use, position) => {
     const next = add(workflow, use, position);
     const name = Object.keys(next.steps).find(name => !workflow.steps?.[name]);
-    onEdit(current => add(current, use, position)); select(handle(['steps', name]));
-    const at = graph(next, catalog, record, report, scope, sizes, width).nodes.find(node => node.id === handle(['steps', name])).position;
-    if (!position) flow.setCenter(at.x + 145, at.y + 150, { zoom: Math.min(flow.getZoom(), 1) });
+    if (!choose({ id: handle(['steps', name]) })) return;
+    onEdit(current => add(current, use, position));
+    const node = graph(next, catalog, record, report, scope, width).nodes.find(node => node.id === handle(['steps', name]));
+    if (!position) flow.setCenter(node.position.x + node.measured.width / 2, node.position.y + node.measured.height / 2, { zoom: Math.min(flow.getZoom(), 1) });
   };
   const propose = async build => {
     const attempt = ++connecting.current, before = latest.current.workflow, next = build(before);
@@ -332,18 +370,20 @@ function CanvasView({ workflow, catalog, onEdit, record, onFrom, onCall, onOpen,
     } catch (error) { show(error.message); }
   };
   const wire = (source, target) => propose(current => ({ workflow: connect(current, source, target), path: target })).then(accepted => { if (accepted) onConnected?.(); });
-  const nodes = derived.nodes.map(node => ({ ...node, selected: node.id === selected, data: { ...node.data, workflow, catalog, edit: onEdit, report, scope, onOpen, notice, propose, onUse, pendingSource, wire } }));
-  return <div className="canvas-layout" ref={canvas} data-editable={onEdit ? '' : undefined}>
-    {!record && onEdit && <NodeList catalog={catalog} onAdd={addStep} onOpen={onOpen} opening={opening} />}
+  const nodes = derived.nodes.map(node => ({ ...node, measured: sizes[node.id] || node.measured,
+    style: { ...node.style, ...(onEdit && node.id === selected.id ? { width: cardGeometry.open, height: 'auto' } : {}) }, selected: node.id === selected.id, data: { ...node.data, workflow, catalog, edit: onEdit, report, scope, onOpen, notice, propose, pendingSource, wire, fresh,
+    active: node.id === selected.id, open: !!onEdit && node.id === selected.id, focus: selected.field, choose, remove, ensureVisible } }));
+  return <div className="canvas-layout" ref={canvas} style={cardStyle} data-editable={onEdit ? '' : undefined}>
+    {onOpen && <NodeList catalog={catalog} onAdd={onEdit && addStep} onOpen={onOpen} opening={opening} />}
     <div className="canvas-main">
     {!record && error && <p className="notice problem">{error}</p>}
     {pendingSource && <div className="notice use-value">Use <code>={pendingSource.join('.')}</code> · Choose an input to connect.<button onClick={onConnected}>Cancel (Escape)</button></div>}
     <div className="canvas">
       <div className="drawing" onDragOver={event => { if (onEdit && event.dataTransfer.types.includes(nodeMime)) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; } }}
         onDrop={event => { const name = event.dataTransfer.getData(nodeMime); if (onEdit && name) { event.preventDefault(); addStep(name, flow.screenToFlowPosition({ x: event.clientX, y: event.clientY })); } }}>
-        <ReactFlow id={id} nodes={nodes} edges={derived.edges.map(edge => ({ ...edge, selected: edge.id === selected }))} nodeTypes={nodeTypes} minZoom={0.15} maxZoom={1.5}
+        <ReactFlow id={id} nodes={nodes} edges={derived.edges.map(edge => ({ ...edge, selected: edge.id === selected.id }))} nodeTypes={nodeTypes} minZoom={minZoom} maxZoom={1.5}
           nodesDraggable={!!onEdit} nodesConnectable={!!onEdit} deleteKeyCode={null} connectOnClick onNodeDragStart={() => { drag.current = {}; }}
-          onNodeClick={(_, node) => select(node.id)} onPaneClick={() => select('')}
+          onNodeClick={(event, node) => { if (node.id !== selected.id && !event.target.closest('.react-flow__handle')) choose({ id: node.id }); }} onPaneClick={() => choose({})}
           onNodesChange={changes => {
             latest.current.onEdit?.(current => {
               let next = current;
@@ -352,55 +392,30 @@ function CanvasView({ workflow, catalog, onEdit, record, onFrom, onCall, onOpen,
             }, drag.current);
           }}
           onConnect={edge => wire(parseHandle(edge.sourceHandle), parseHandle(edge.targetHandle))}
-          onEdgeClick={(_, edge) => { if (onEdit) select(edge.id); }}>
-          <Fit key={record?.state + ':' + failed + ':' + !!Object.keys(workflow.steps || {}).length} ready={fresh} nodes={nodes} focus={failed && handle(['steps', failed])} /><Background gap={22} size={1} /><Controls showInteractive={false} fitViewOptions={fitOptions} />
+          onEdgeClick={(_, edge) => { if (onEdit) choose({ id: edge.id }); }}>
+          <Fit key={fitRequest + ':' + !!Object.keys(workflow.steps || {}).length} ready={fitRequest > 0 || fresh || !!error} nodes={derived.nodes} width={width} height={height} /><Background gap={22} size={1} />
+          <Controls orientation="horizontal" showInteractive={false} showFitView={false}>
+            <ControlButton className="react-flow__controls-fitview layout" title="Fit View" aria-label="Fit View" onClick={() => requestFit(value => value + 1)}>Fit</ControlButton>
+            {onEdit && <ControlButton className="layout" title="Tidy layout" disabled={!Object.keys(workflow.view?.positions || {}).length} onClick={() => { if (!choose({})) return; onEdit(current => set(current, ['view', 'positions'], undefined)); requestFit(value => value + 1); }}>Tidy</ControlButton>}
+            {onEdit && derived.edges.some(edge => edge.id === selected.id) && <ControlButton aria-label="Delete connection" title="Delete connection (Delete / Backspace)" onClick={remove}><Icon name="delete" /></ControlButton>}
+          </Controls>
         </ReactFlow>
         {onEdit && !Object.keys(workflow.steps || {}).length && <div className="empty-canvas">Click a node on the left or drag it onto the canvas to add a step.</div>}
       </div>
-      {selected && <aside className="inspector nowheel">
-        <button className="quiet close" title="Close (Escape)" onClick={() => select('')}><Icon name="close" />Close</button>
-        {step && <>
-          <h3>{name}</h3><p className="inspector-node">{typeof step.use === 'string' ? step.use : 'Inline workflow'}</p>
+      {record && selected.id && (step || boundary) && <aside className="inspector nowheel">
+        <button className="quiet close" title="Close (Escape)" onClick={() => select({})}><Icon name="close" />Close</button>
+        {step ? <>
+          <h3>{name}</h3><p className="inspector-node">{nodeName(step.use)}</p>
           {onFrom && <button onClick={() => onFrom(name)}>Run from here</button>}
-          {onEdit && <div className="row">
-            <Named label="Step name" name={name} names={Object.keys(workflow.steps)} onChange={fresh && (next => {
-              if (next !== name) { onEdit(current => rename(current, 'steps', name, next, report)); select(handle(['steps', next])); }
-            })} />
-            <button title="Delete step (Delete / Backspace)" onClick={remove}><Icon name="delete" />Delete step</button>
-          </div>}
-          {child ? <>
+          {child && <>
             <p><span className={'state ' + child.state}>{child.state}</span> <Duration record={child} /></p>{child.error && <p className="problem">{child.error}</p>}
-            <h4>Received</h4><Value value={child.inputs ?? undefined} port={{ fields: derived.nodes.find(node => node.id === selected)?.data.inputs }} />
-            <h4>Returned</h4><Value value={child.outputs ?? undefined} port={{ fields: derived.nodes.find(node => node.id === selected)?.data.outputs }} path={[name]} onUse={onUse} />
+            <h4>Received</h4><Value value={child.inputs ?? undefined} port={{ fields: derived.nodes.find(node => node.id === selected.id)?.data.inputs }} />
+            <h4>Returned</h4><Value value={child.outputs ?? undefined} port={{ fields: derived.nodes.find(node => node.id === selected.id)?.data.outputs }} path={[name]} onUse={onUse} />
             {onCall && Object.entries(child.steps || {}).map(([key, call]) => <button className="call" key={key} onClick={() => onCall([...(record.workflow ? [name] : []), key])}>
               Call {key} · {call.node} · <span className={'state ' + call.state}>{call.state}</span> · <Duration record={call} />
             </button>)}
-          </> : <p>Run this workflow to see what this step received and returned.</p>}
-          {!record && <Messages items={problems(report, scope + '/' + name)} />}
-        </>}
-        {boundary && <>
-          <h3>{boundary === 'inputs' ? 'Inputs' : 'Outputs'}</h3>
-          {record ? <Value value={record[boundary]} port={{ fields: workflowDescription(report)?.[boundary] }} /> : Object.entries(workflow[boundary] || {}).map(([key, port]) => <div className="boundary" key={key}>
-            {onEdit ? <div className="row">
-              <Named name={key} names={Object.keys(workflow[boundary])} onChange={fresh && (next => { if (next !== key) onEdit(current => rename(current, boundary, key, next, report)); })} />
-              <button aria-label="Delete" title="Delete" onClick={() => onEdit(current => set(current, [boundary, key], undefined))}><Icon name="delete" /></button>
-            </div> : <strong>{key}</strong>}
-            {boundary === 'inputs' ? <>
-              <label>Type<Named label="Input type" name={type(port)} onChange={onEdit && (next =>
-                onEdit(current => set(current, [boundary, key], typeof port === 'object' ? { ...port, type: next } : next)))} /></label>
-              <label>Default<Field port={workflowDescription(report)?.inputs?.[key] || port} value={port?.default} onChange={onEdit && ((next, group) =>
-                onEdit(current => set(current, [boundary, key], declaration => next === undefined ? { type: type(declaration) } : { type: type(declaration), default: set(declaration?.default, [], next) }), group))} catalog={catalog} references={false} /></label>
-            </> : <Field value={port} onChange={onEdit && ((next, group) => onEdit(current => set(current, [boundary, key], next), group))} catalog={catalog} />}
-          </div>)}
-          {onEdit && <button onClick={() => {
-            let n = 1;
-            while (Object.hasOwn(workflow[boundary] || {}, 'value' + n)) n++;
-            onEdit(current => set(current, [boundary, 'value' + n], boundary === 'inputs' ? 'text' : ''));
-          }} title={'Add ' + (boundary === 'inputs' ? 'input' : 'output')}><Icon name="add" />Add {boundary === 'inputs' ? 'input' : 'output'}</button>}
-        </>}
-        {derived.edges.find(edge => edge.id === selected) && onEdit && <>
-          <h3>Connection</h3><button title="Delete connection (Delete / Backspace)" onClick={remove}><Icon name="delete" />Delete connection</button>
-        </>}
+          </>}
+        </> : <><h3>{boundary === 'inputs' ? 'Inputs' : 'Outputs'}</h3><Value value={record[boundary]} port={{ fields: workflowDescription(report)?.[boundary] }} /></>}
       </aside>}
     </div>
     {!record && <details className={'report ' + (report.problems.length ? 'has-problem' : '')} open={report.problems.length > 0}>

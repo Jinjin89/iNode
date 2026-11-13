@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Icon } from './Icon';
-import { box, canReference, copyText, duration, kind, textPreview, type } from './model';
+import { box, canReference, copyText, duration, kind, nodeName, textPreview, type } from './model';
 
 export function Duration({ record }) {
   const [now, setNow] = useState(Date.now);
@@ -12,11 +12,16 @@ export function Duration({ record }) {
   return <time className="duration">{duration(record, now)}</time>;
 }
 
-export function Value({ value, port = {}, path = [], onUse, level = 0 }) {
+export function Value({ value, port = {}, path = [], onUse, level = 0, compact = false }) {
   const [open, setOpen] = useState(level === 0);
   const [all, showAll] = useState(false);
   const [copied, setCopied] = useState('');
   useEffect(() => { setCopied(''); showAll(false); }, [value]);
+  if (compact) {
+    const use = typeof value === 'string' ? value : value?.use;
+    const text = box(port) && use !== undefined ? nodeName(use) : copyText(value);
+    return <span className="value-preview" title={text}>{text}</span>;
+  }
   const list = Array.isArray(value), tree = value !== null && typeof value === 'object';
   const entries = tree ? Object.entries(value) : [];
   const text = value === undefined ? 'Not available' : value === null ? 'null' : String(value);

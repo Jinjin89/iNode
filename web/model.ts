@@ -19,6 +19,7 @@ export const emptyValue = (port?: Port): any => (typeof port === 'object' ? port
   ?? (({ text: '', number: 0, bool: false, list: [], object: {} } as Values)[kind(port) || ''] ?? null);
 export const workflowDescription = (report: Report): Description | undefined => report.nodes[JSON.stringify(null)];
 export const box = (port?: Port): boolean => kind(port) === 'node';
+export const nodeName = (use: Definition): string => typeof use === 'string' ? use : 'Inline workflow';
 export const reference = (value: any): boolean => typeof value === 'string' && value.startsWith('=') && !value.startsWith('==');
 export const handle = (path: Path): string => encodeURIComponent(JSON.stringify(path));
 export const parseHandle = (id: string): Path => JSON.parse(decodeURIComponent(id));
@@ -159,13 +160,21 @@ export function connectionProblem(report: Report, path: Path, scope: string): Pr
   return problems(report, step ? scope + '/' + path[1] : scope, input)[0];
 }
 
+export const cardGeometry = { width: 190, open: 310, header: 26, name: 20, row: 24, border: 1, padding: 16, socket: 18, gap: 32, column: 72 };
+
+export function reveal(box: { left: number; right: number; top: number; bottom: number }, frame: { left: number; right: number; top: number; bottom: number }) {
+  const shift = (start: number, end: number, low: number, high: number) => Math.max(low + cardGeometry.padding - start, Math.min(0, high - cardGeometry.padding - end));
+  return { x: shift(box.left, box.right, frame.left, frame.right), y: shift(box.top, box.bottom, frame.top, frame.bottom) };
+}
+
 export function layout(
   ids: string[], edges: { source: string; target: string }[],
   stored: Record<string, { x: number; y: number }> = {},
   sizes: Record<string, { width?: number; height?: number }> = {}, width = 0,
-): Record<string, { x: number; y: number }> {
+) {
   const input = handle(['inputs']), output = handle(['outputs']);
-  const gap = 32, column = 290 + 72;
+  const { width: cardWidth, gap } = cardGeometry, column = cardWidth + cardGeometry.column;
+  const height = (id: string) => sizes[id]?.height || cardGeometry.header + cardGeometry.name + 2 * (cardGeometry.row + cardGeometry.border);
   const steps = ids.filter(id => id !== input && id !== output);
   const depth = (id: string, seen: string[] = []): number => seen.includes(id) ? 0 : Math.max(1, ...edges
     .filter(edge => edge.target === id && steps.includes(edge.source))
@@ -174,21 +183,21 @@ export function layout(
   columns[input] = 0; columns[output] = Math.max(0, ...Object.values(columns)) + 1;
   const positions = Object.fromEntries(ids.filter(id => stored[id]).map(id => [id, stored[id]]));
   const left = stored[input]?.x ?? Math.min(0, ...steps.filter(id => stored[id]).map(id => stored[id].x - column));
-  const right = Math.max(left + columns[output] * column, ...steps.filter(id => stored[id]).map(id => stored[id].x + column), steps.length ? 0 : width - 290);
+  const right = Math.max(left + columns[output] * column, ...steps.filter(id => stored[id]).map(id => stored[id].x + column), steps.length ? 0 : width - cardWidth);
   for (const id of [...ids].sort((a, b) => columns[a] - columns[b])) {
     if (stored[id]) continue;
     const x = id === output ? right : left + columns[id] * column;
     let y = 0, collision;
     while ((collision = ids.find(other => positions[other]
-      && x < positions[other].x + (sizes[other]?.width || 290) + gap
-      && x + (sizes[id]?.width || 290) + gap > positions[other].x
-      && y < positions[other].y + (sizes[other]?.height || 240) + gap
-      && y + (sizes[id]?.height || 240) + gap > positions[other].y))) {
-      y = positions[collision].y + (sizes[collision]?.height || 240) + gap;
+      && x < positions[other].x + (sizes[other]?.width || cardWidth) + gap
+      && x + (sizes[id]?.width || cardWidth) + gap > positions[other].x
+      && y < positions[other].y + height(other) + gap
+      && y + height(id) + gap > positions[other].y))) {
+      y = positions[collision].y + height(collision) + gap;
     }
     positions[id] = { x, y };
   }
-  return positions;
+  return { positions, depths: columns };
 }
 
 export function problems(report: Report, where: string, input?: string): Problem[] {
@@ -198,7 +207,7 @@ export function problems(report: Report, where: string, input?: string): Problem
       || problem.step === where + '/' + input || problem.step.startsWith(where + '/' + input + '/'));
 }
 
-export function graph(workflow: Workflow, catalog: Description[], record?: Run, report: Report = emptyReport, scope = '(inline)', sizes: Record<string, { width?: number; height?: number }> = {}, width = 0) {
+export function graph(workflow: Workflow, catalog: Description[], record?: Run, report: Report = emptyReport, scope = '(inline)', width = 0) {
   const records = record?.workflow ? record.steps || {} : record ? { node: record } : {};
   const edges: { id: string; source: string; target: string; sourceHandle: string; targetHandle: string; className: string }[] = [];
   for (const ref of report.references) {
@@ -217,37 +226,38 @@ export function graph(workflow: Workflow, catalog: Description[], record?: Run, 
     }));
   }
   const nodes = [
-    { id: handle(['inputs']), type: 'step', position: { x: 0, y: 0 }, data: { kind: 'inputs', ports: { ...workflow.inputs, ...workflowDescription(report)?.inputs }, record } },
+    { id: handle(['inputs']), type: 'step', position: { x: 0, y: 0 }, data: { kind: 'inputs', ports: Object.fromEntries(Object.entries(workflow.inputs || {}).map(([name, port]) => [name, workflowDescription(report)?.inputs?.[name] || port])), record } },
     ...Object.entries(workflow.steps || {}).map(([name, step]) => {
       const info = report.nodes[JSON.stringify(['steps', name])] || describe(records[name]?.workflow || step.use, catalog);
       const returned = records[name]?.outputs;
-      const outputs: Record<string, Port> = returned
-        ? Object.fromEntries(Object.keys(returned).map(key => [key, info.outputs?.[key] || 'any']))
-        : { ...info.outputs, ...Object.fromEntries(Object.keys(info.workflow?.outputs || {}).map(key => [key, 'any'])) };
+      const outputs: Record<string, Port> = { ...Object.fromEntries(Object.keys(returned || {}).map(key => [key, 'any'])),
+        ...Object.fromEntries(Object.keys(info.workflow?.outputs || {}).map(key => [key, 'any'])), ...info.outputs };
       for (const edge of edges.filter(edge => edge.source === handle(['steps', name]) && edge.className.split(' ')[0] !== 'after')) {
         const output = parseHandle(edge.sourceHandle)[1];
         if (output !== undefined) outputs[output] ||= 'any';
       }
       return { id: handle(['steps', name]), type: 'step', position: { x: 0, y: 0 }, data: {
         kind: 'step', name, step, info, outputs, record: records[name],
-        inputs: records[name]?.inputs
-          ? Object.fromEntries(Object.keys(records[name].inputs).map(key => [key, info.inputs?.[key] || 'any']))
-          : { ...inputs(step.use, step.in, catalog), ...info.inputs },
+        inputs: { ...Object.fromEntries(Object.keys(records[name]?.inputs || {}).map(key => [key, 'any'])), ...inputs(step.use, step.in, catalog), ...info.inputs },
       } };
     }),
     { id: handle(['outputs']), type: 'step', position: { x: 0, y: 0 }, data: { kind: 'outputs', ports: workflow.outputs || {}, record } },
   ];
-  const positions = layout(nodes.map(node => node.id), edges, workflow.view?.positions, sizes, width);
-  return { nodes: nodes.map(node => ({ ...node, measured: sizes[node.id], position: positions[node.id] })), edges: edges.map(edge => {
+  const sizes = Object.fromEntries(nodes.map(node => [node.id, { width: cardGeometry.width,
+    height: cardGeometry.header + 2 * cardGeometry.border + ('ports' in node.data ? Object.keys(node.data.ports).length * cardGeometry.row
+      : cardGeometry.name + (Object.keys(node.data.inputs).length + Object.keys(node.data.outputs).length) * cardGeometry.row) }]));
+  const { positions, depths } = layout(nodes.map(node => node.id), edges, workflow.view?.positions, sizes, width);
+  return { nodes: nodes.map(node => ({ ...node, measured: sizes[node.id], style: { ...sizes[node.id], '--depth': depths[node.id] }, position: positions[node.id] })), edges: edges.map(edge => {
     const source = nodes.find(node => node.id === edge.source)?.data;
     const target = nodes.find(node => node.id === edge.target)?.data;
     const ports = source && ('outputs' in source ? source.outputs : source.ports);
     const port = ports?.[String(parseHandle(edge.sourceHandle)[1])];
     return { ...edge, style: { '--type-color': `var(--type-${kind(port) || 'any'}, var(--type-any))` },
-      className: edge.className + (target?.kind === 'step' && target.record?.state === 'running' ? ' running' : '') };
+      className: edge.className + (target?.kind === 'step' && target.record?.state === 'running' ? ' running' : '')
+        + (source?.record?.state === 'done' ? ' settled' : '') };
   }) };
 }
 
-export function runWorkflow(run: Run): Workflow {
-  return run.workflow || { steps: { node: { use: run.node } }, outputs: Object.fromEntries(Object.keys(run.outputs || {}).map(name => [name, '=node.' + name])) };
+export function runWorkflow(run: Run, catalog: Description[]): Workflow {
+  return run.workflow || { steps: { node: { use: run.node } }, outputs: Object.fromEntries(Object.keys({ ...describe(run.node, catalog).outputs, ...run.outputs }).map(name => [name, '=node.' + name])) };
 }

@@ -57,6 +57,7 @@ export function App() {
   const report = checked.report;
   const trail = record ? runTrail(record, runPath) : [];
   const shown = trail.at(-1)?.run;
+  const viewed = shown ? runWorkflow(shown, catalog) : workflow;
   const values = inputValues(workflow, runInputs);
   const messages = runMessages(runError, Object.keys(workflow.inputs || {}));
   const runReason = checked.document !== content(workflow) ? '' : checked.error ? 'Fix the check error to run'
@@ -238,12 +239,12 @@ export function App() {
         </form>}
         {shown?.error && <div className="notice problem">{shown.error}</div>}
         <Source source={shown?.source} showRun={showRun} fail={setError} />
-        {runId && !record ? <p className="loading">Opening run…</p> :
-          <Canvas key={runId ? runId + JSON.stringify(runPath) : opened.key} workflow={shown ? runWorkflow(shown) : workflow} catalog={catalog}
+        {runId && !record && !fromEditor ? <p className="loading">Opening run…</p> :
+          <Canvas key={runId && (!fromEditor || runPath.length) ? runId + JSON.stringify(runPath) : opened.key} workflow={fromEditor && !runPath.length ? { ...viewed, view: workflow.view } : viewed} catalog={catalog}
             onEdit={runId ? undefined : setWorkflow} record={shown} onFrom={!runPath.length && record?.workflow && record.finished && !pending.includes('from') ? from : undefined}
             onCall={record && (path => setRunPath([...runPath, ...path]))}
             onUse={!runPath.length && fromEditor && record?.finished ? useValue : undefined} pendingSource={!runId && pendingSource} onConnected={() => setPendingSource(null)}
-            onOpen={runId ? undefined : name => perform(() => open(name), 'open')} opening={pending.includes('open')} onCheck={setChecked} />}
+            onOpen={name => perform(() => open(name), 'open')} opening={pending.includes('open')} onCheck={setChecked} />}
         {shown && <details className="report run-outputs" open><summary>Run outputs</summary><Value value={shown.outputs ?? undefined} port={{ fields: workflowDescription(report)?.outputs }} /></details>}
       </section>
     </div> : screen === 'Runs' ? <Runs showRun={showRun} fail={setError} trigger={runFilter} /> : screen === 'When' ?
