@@ -1,0 +1,8 @@
+doc: Ask an Anthropic model for its next reply; put this in an agent's model box.
+inputs:
+  key: secret
+  model: {type: text, default: claude-opus-5-5}
+  url: {type: text, default: "https://api.anthropic.com/v1/messages"}
+  request: object
+outputs: {reply: "object{text: text, calls: list of object}"}
+run: python3 chat.py

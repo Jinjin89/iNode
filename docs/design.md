@@ -63,7 +63,7 @@ A node passed this way has at most one open input and exactly one output. A node
 | `repeat(start: T, do: node(T) gives object{state: T, done: bool}, max: number)` | Calls `do` with the state until `done`. `result: T`, the final state. Reaching `max` calls without `done` fails. Covers paging and polling. |
 | `retry(do: node() gives T, times: number)` | Calls `do` up to `times` times in total until it succeeds. `result: T`. Accepts only nodes with no outside effect. |
 | `try(do: node() gives T, on_error: node(error: object) gives T)` | Calls `on_error` with the failed step's name and message when `do` fails. `result: T`. |
-| `agent(goal: text, tools: list of node)` | An AI model calls the given nodes as tools; a node's name, description and inputs are the tool definition. `result: text`. Tools must have plain-data open inputs and a plain-data output; secrets, handles and node inputs are filled in beforehand. |
+| `agent(goal: text, model: node(object) gives object{text: text, calls: list of object}, tools: list of node(any) gives any, max: number)` | Calls `model` with `{messages, tools}` and runs the tools its reply asks for, until a reply has no calls. `result: text`. A tool's name, description and open input are its definition; a failed tool is told to the model. The model decides which tools run, outside effects included, and nothing asks first. Reaching `max` model calls fails. |
 
 A step can also list other steps in `after`. It then waits for them to succeed without using their outputs. The frontend draws this as its own kind of line. It orders side effects; it does not undo or clean up anything on failure.
 
@@ -204,6 +204,7 @@ These are deliberate. Each keeps the model small.
 | Enforced limits on what a plugin can do | Plugins are trusted code; install only what you trust. |
 | Full MCP conformance | Stdio, 2026-07-28, and earlier revisions for tools only; schemas are projected to iNode types without full validation, which MCP requires clients to perform. No HTTP, input rounds, sampling, roots, resource operations, prompts/completion, tasks, Apps or push catalog updates. File arguments use the server's JSON contract; inline wire frames are buffered and limited to 8 MiB. |
 | Full OpenAPI coverage | OpenAPI 3 documents up to 8 MiB with local `$ref`s; inputs are not validated against the schema. JSON request bodies only; JSON and text responses up to 8 MiB are data, other content becomes files, a status of 400 or above fails the run, and response headers are not returned. Only GET and HEAD are marked as having no outside effect. Credentials are http bearer/basic and header/query API keys, each read from the variable named after its security scheme; no OAuth flows, cookies or mutual TLS. |
+| A full AI agent | `agent` is the tool loop only: no streaming, no memory between runs, one tool call at a time, no files to the model, no approval before outside effects, and each tool has one open plain-data input and one output. |
 | Managing iNode from another machine | The backend serves the local machine only. |
 | Automatic removal of stored files | Archive/move whole projects including `.inode/`, or remove unneeded projects. Deleting blobs breaks run records. |
 | Importing n8n or ComfyUI workflow files | Adapters reuse their capabilities, not their formats. |

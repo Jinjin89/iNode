@@ -10,7 +10,7 @@ Connect nodes into a **workflow**. Save that workflow and it becomes a node too,
 
 A **step** is one use of a node in a workflow. An input marked optional may be left empty.
 
-A **box** is a slot on a step that holds another node for that step to call; a node in a box never runs by itself.
+A **box** is a slot on a step that holds another node for that step to call; a node in a box never runs by itself. `agent` holds a model and a list of tool nodes; the model chooses which tools to call, without asking you, until it has an answer.
 
 A **plugin** is a folder of more nodes.
 ```text
