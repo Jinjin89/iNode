@@ -80,6 +80,28 @@ func TestSaveWorkflow(t *testing.T) {
 	}
 }
 
+func TestSaveNameExists(t *testing.T) {
+	p := fileProject(t, map[string]string{"upper.flow": "outputs: {text: hi}"})
+	client := runningBackend(t, p.dir)
+	path := filepath.Join(p.dir, "upper.flow")
+	before, _ := os.ReadFile(path)
+	for _, test := range []struct{ name, version, message string }{
+		{"upper", "", `node "upper" already exists; choose another name`},
+		{"upper.flow", "", `node "upper" already exists; choose another name`},
+		{"text.upper", "", `node "text.upper" already exists; choose another name`},
+		{"upper", "old-version", `workflow "upper" changed on disk; open it again before saving`},
+	} {
+		err := client.Call(t.Context(), "save", []any{test.name, test.version, Values{"outputs": Values{"text": "replacement"}}}, func(json.RawMessage) error { return nil })
+		if err == nil || err.Error() != test.message {
+			t.Fatalf("save %q with version %q: %v; want %s", test.name, test.version, err, test.message)
+		}
+		after, _ := os.ReadFile(path)
+		if !bytes.Equal(before, after) {
+			t.Fatal("rejected save changed the file")
+		}
+	}
+}
+
 func TestSaveExample(t *testing.T) {
 	files := map[string]string{}
 	for _, name := range []string{"upper.flow", "greeting.flow"} {

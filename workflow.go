@@ -19,7 +19,7 @@ func (p *Project) Save(name, basedOn string, value json.RawMessage) (Node, error
 		return Node{}, fmt.Errorf("choose a workflow name without path separators")
 	}
 	if node, exists := p.nodes[name]; exists && node.Workflow == nil {
-		return Node{}, fmt.Errorf("node %q already exists; choose another workflow name", name)
+		return Node{}, fmt.Errorf("node %q already exists; choose another name", name)
 	}
 	var flow Workflow
 	if err := decode(value, &flow); err != nil {
@@ -39,6 +39,9 @@ func (p *Project) Save(name, basedOn string, value json.RawMessage) (Node, error
 		current = version(old)
 	}
 	if current != basedOn {
+		if basedOn == "" {
+			return Node{}, fmt.Errorf("node %q already exists; choose another name", name)
+		}
 		return Node{}, fmt.Errorf("workflow %q changed on disk; open it again before saving", name)
 	}
 	if err := writeFile(path, data, 0644, false); err != nil {

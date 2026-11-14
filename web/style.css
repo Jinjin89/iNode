@@ -313,6 +313,7 @@ dialog { border: 0; padding: 0; color: inherit; box-shadow: var(--shadow-float);
 dialog:not([open]) { display: none; }
 dialog::backdrop { background: var(--backdrop); }
 .run-inputs { background: var(--surface); width: 440px; max-height: 90vh; overflow: auto; padding: var(--space-6); border-radius: var(--radius-dialog); box-shadow: var(--shadow-float); }
+.run-inputs label > input { display: block; width: 100%; margin-top: var(--space-2); }
 .run-inputs .port { padding: var(--space-2) 0; }
 .run-inputs .row { justify-content: flex-end; margin-top: var(--space-5); }
 @media (max-width: 1200px) { .node-entry { flex-direction: column; } .node-list .node-add { width: 100%; } .node-list .node-open { align-self: flex-end; margin: 0 var(--space-2) var(--space-2); } .catalog { width: 180px; flex-basis: 180px; } .brand span { display: none; } .inspector { flex-basis: 270px; } .toolbar { flex-wrap: wrap; } .app-header { gap: var(--space-5); padding: 0 var(--space-4); } .guide { flex-basis: 300px; } th, td { padding: var(--space-3); } .trigger-steps { flex-wrap: wrap; } .trigger-steps > section { flex-basis: 240px; } }
