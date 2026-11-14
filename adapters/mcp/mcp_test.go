@@ -155,6 +155,9 @@ func TestAdapterVersionsAndCalls(t *testing.T) {
 			if nodes["echo"].(object)["no_outside_effect"] == true || !strings.Contains(nodes["enum"].(object)["doc"].(string), "ready") {
 				t.Fatal("annotations or enum description")
 			}
+			if nodes["echo"].(object)["doc"] != "Test echo" || !strings.Contains(nodes["media%2Erender"].(object)["doc"].(string), "\nMCP tool: media.render") || strings.Contains(nodes["enum"].(object)["doc"].(string), "Input schema:") {
+				t.Fatal("only escaped tool names need a name note; schemas must not be dumped")
+			}
 			for _, call := range []struct {
 				id, node string
 				inputs   object

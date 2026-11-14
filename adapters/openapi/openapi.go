@@ -25,7 +25,7 @@ type object = adapters.Object
 
 type operation struct {
 	method, path string
-	parameters   map[string]object
+	parameters   object
 	security     []any
 }
 
@@ -160,37 +160,30 @@ func load(ctx context.Context, source, base string) (*api, error) {
 			if a.nodes[key] != nil {
 				return nil, fmt.Errorf("operation %s appears twice in %s; give each operation a distinct operationId", name, source)
 			}
-			o := operation{method: strings.ToUpper(method), path: path, parameters: map[string]object{}}
+			o := operation{method: strings.ToUpper(method), path: path, parameters: object{}}
 			if o.security, ok = op["security"].([]any); !ok {
 				o.security, _ = doc["security"].([]any)
 			}
 			own, _ := op["parameters"].([]any)
-			properties, required := object{}, []any{}
 			for _, value := range append(slices.Clone(shared), own...) {
 				parameter, _ := value.(object)
 				if name, _ := parameter["name"].(string); parameter["in"] != "cookie" {
-					o.parameters[name], properties[name] = parameter, parameter["schema"]
+					o.parameters[name] = parameter
 				}
 			}
-			if body, _ := op["requestBody"].(object); body != nil {
-				content, _ := body["content"].(object)
-				if media, ok := content["application/json"].(object); ok {
-					o.parameters["body"], properties["body"] = object{"in": "body", "required": body["required"]}, media["schema"]
-				}
+			body, _ := op["requestBody"].(object)
+			content, _ := body["content"].(object)
+			if media, ok := content["application/json"].(object); ok {
+				o.parameters["body"] = object{"in": "body", "required": body["required"], "description": body["description"], "schema": media["schema"]}
 			}
 			about := o.method + " " + path
-			for name, parameter := range o.parameters {
-				if parameter["required"] == true {
-					required = append(required, name)
-				}
-			}
-			inputs := adapters.Ports(object{"properties": properties, "required": required})
 			for _, key := range []string{"summary", "description"} {
 				if text, _ := op[key].(string); text != "" {
 					about = text + "\n" + about
 					break
 				}
 			}
+			inputs, about := adapters.Describe(object{"properties": o.parameters}, about)
 			a.nodes[key], a.operations[key] = object{"doc": about, "inputs": inputs, "outputs": object{"result": "object{status: number, body: any, files: list of file}"}, "no_outside_effect": method == "get" || method == "head"}, o
 		}
 	}
@@ -229,7 +222,8 @@ func (a *api) run(ctx context.Context, node string, inputs object, dir string) (
 		return nil, fmt.Errorf("unknown operation")
 	}
 	path, query, header, body := o.path, url.Values{}, http.Header{}, io.Reader(nil)
-	for name, parameter := range o.parameters {
+	for name, entry := range o.parameters {
+		parameter := entry.(object)
 		value := inputs[adapters.Escape(name)]
 		if value == nil && parameter["required"] == true {
 			return nil, fmt.Errorf("supply input %s", name)

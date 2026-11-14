@@ -2,8 +2,27 @@ package adapters
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 )
+
+func TestParameterNotesPreservePorts(t *testing.T) {
+	property := Object{"type": "string", "description": "A choice.\n Pick one.", "enum": []any{"ready", "pending"}}
+	for _, schema := range []Object{
+		{"properties": Object{"state": property, "quiet": Object{"type": "number"}}, "required": []any{"state"}},
+		{"properties": Object{"state": Object{"schema": Object{"type": "string", "enum": property["enum"]}, "description": property["description"], "required": true}, "quiet": Object{"schema": Object{"type": "number"}}}},
+	} {
+		ports, doc := Describe(schema, "Choose a state.")
+		want := Object{"state": "text", "quiet": Object{"type": "number", "optional": true}}
+		if !reflect.DeepEqual(ports, want) || doc != "Choose a state.\nstate: A choice. Pick one. (one of [ready pending])" {
+			t.Fatalf("ports or notes: %#v, %q", ports, doc)
+		}
+	}
+	ports, doc := Describe(Object{}, "")
+	if len(ports) != 0 || doc != "No description supplied." {
+		t.Fatalf("a tool without a description must still load: %#v, %q", ports, doc)
+	}
+}
 
 func TestProjection(t *testing.T) {
 	for _, test := range []struct {

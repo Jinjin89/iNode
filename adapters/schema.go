@@ -2,6 +2,7 @@
 package adapters
 
 import (
+	"cmp"
 	"fmt"
 	"mime"
 	"slices"
@@ -10,19 +11,32 @@ import (
 
 type Object = map[string]any
 
-// Ports projects each property, escaping its name and preserving whether it may be absent.
-func Ports(schema Object) Object {
-	ports := Object{}
+// Describe projects ports and appends readable parameter notes to the node description.
+func Describe(schema Object, doc string) (Object, string) {
+	ports, docs := Object{}, []string{}
 	properties, _ := schema["properties"].(Object)
 	required, _ := schema["required"].([]any)
 	for field, value := range properties {
-		var port any = Project(value)
-		if !slices.Contains(required, any(field)) {
+		info, _ := value.(Object)
+		shape := info
+		if nested, ok := info["schema"].(Object); ok {
+			shape = nested
+		}
+		var port any = Project(shape)
+		if !slices.Contains(required, any(field)) && info["required"] != true {
 			port = Object{"type": port, "optional": true}
 		}
 		ports[Escape(field)] = port
+		text, _ := info["description"].(string)
+		if enum, ok := shape["enum"]; ok {
+			text += fmt.Sprintf(" (one of %v)", enum)
+		}
+		if text != "" {
+			docs = append(docs, "\n"+Escape(field)+": "+strings.Join(strings.Fields(text), " "))
+		}
 	}
-	return ports
+	slices.Sort(docs)
+	return ports, cmp.Or(strings.TrimSpace(doc+strings.Join(docs, "")), "No description supplied.")
 }
 
 func closed(schema Object) bool {

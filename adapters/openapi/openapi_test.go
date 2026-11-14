@@ -115,7 +115,7 @@ func TestOperations(t *testing.T) {
 				t.Fatalf("%s %s: %#v", source[0], name, node)
 			}
 		}
-		if len(nodes) != len(want) || nodes["pets%2Eget"].(object)["doc"] != "Fetch one pet.\nGET /pets/{id}" || nodes["listPets"].(object)["doc"] != "GET /pets" {
+		if len(nodes) != len(want) || nodes["pets%2Eget"].(object)["doc"] != "Fetch one pet.\nGET /pets/{id}" || nodes["listPets"].(object)["doc"] != "GET /pets\nlimit: Maximum pets to return. (one of [0 2])" {
 			t.Fatalf("%s catalog: %#v", source[0], nodes)
 		}
 		echo := func(node string, inputs object) object {

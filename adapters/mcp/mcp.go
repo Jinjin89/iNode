@@ -199,7 +199,6 @@ func (p *peer) catalog(ctx context.Context) (map[string]object, map[string]objec
 			if !ok {
 				return nil, nil, fmt.Errorf("tool %s needs an inputSchema object", name)
 			}
-			inputs := adapters.Ports(schema)
 			response := "object"
 			output, structured := tool["outputSchema"]
 			if structured {
@@ -209,8 +208,11 @@ func (p *peer) catalog(ctx context.Context) (map[string]object, map[string]objec
 			if unsupported(tool) {
 				doc += "\nUnavailable: task-only tools and MCP Apps are unsupported."
 			}
-			raw, _ := json.Marshal(schema)
-			nodes[key] = object{"doc": doc + "\nMCP tool: " + name + "\nInput schema: " + string(raw), "inputs": inputs, "outputs": object{"result": "object{response: " + response + ", files: list of file}"}}
+			if key != name {
+				doc += "\nMCP tool: " + name
+			}
+			inputs, doc := adapters.Describe(schema, doc)
+			nodes[key] = object{"doc": doc, "inputs": inputs, "outputs": object{"result": "object{response: " + response + ", files: list of file}"}}
 			tools[key] = object{"name": name, "structured": structured, "unsupported": unsupported(tool)}
 		}
 		catalogData, _ := json.Marshal(nodes)

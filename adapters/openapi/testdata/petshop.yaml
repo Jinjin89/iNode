@@ -29,7 +29,7 @@ paths:
       security: []
       parameters:
         - {name: tag, in: query, schema: {type: array, items: {type: string}}}
-        - {name: limit, in: query, required: true, schema: {type: integer}}
+        - {name: limit, in: query, required: true, description: Maximum pets to return., schema: {type: integer, enum: [0, 2]}}
         - {name: a.b, in: query, schema: {type: string}}
         - {name: 'filter[name]', in: query, schema: {type: string}}
   /photo:
