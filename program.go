@@ -25,7 +25,7 @@ type program struct {
 	Files  map[string]string `json:"files"`
 }
 
-func commandText(args []any) string {
+func CommandText(args []any) string {
 	words := make([]string, len(args))
 	for i, value := range args {
 		word := value.(string)
@@ -39,11 +39,12 @@ func commandText(args []any) string {
 
 func argumentList(value any, key string) ([]any, error) {
 	if text, ok := value.(string); ok {
-		if strings.ContainsAny(text, "\"'|&;<>$`()*?[]{}~!#\\\r\n") {
-			return nil, fmt.Errorf("%s: write an argument list such as %s: [program, \"one argument\"] instead of shell quoting or characters", key, key)
+		words, err := splitCommand(text)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w; use an argument list for literal shell characters", key, err)
 		}
 		args := []any{}
-		for _, word := range strings.Fields(text) {
+		for _, word := range words {
 			args = append(args, word)
 		}
 		return args, nil

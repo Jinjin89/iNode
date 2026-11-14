@@ -120,7 +120,7 @@ Keep reading while runs execute: replies may arrive out of order and ids identif
 **Adapters**, in order of value:
 
 1. **Command-line tools.** Ordinary `.node` descriptions bind arguments, flags, stdin, stdout and environment without a shell. File bindings follow with the managed file store; wrapping ffmpeg or pandoc then needs only a description.
-2. **MCP servers.** Each tool becomes a node. Tools without an output schema return one `result` object. Tools that ask for more input mid-call are not supported.
+2. **MCP servers.** Paste a server command into Plugins, edit the name and secret bindings, then confirm the ordinary plugin that runs `inode mcp -- <server command>`. Each tool becomes a node with conservative schema-derived ports and `result: {response, files}` (text/structured data and stored media); Add again rediscovers tools.
 3. **OpenAPI.** Each operation becomes a node. This gives API calls, not finished integrations; paging, polling and sign-in are built on top as workflows.
 4. **Library functions.** Signature to ports, as scaffolding for functions that already fit.
 5. **ComfyUI.** One node submits a whole graph to a running ComfyUI server and returns its output files. Hosting individual ComfyUI nodes is not planned.
@@ -169,7 +169,7 @@ outputs: {ok: =sent.ok}
 
 ## Writing a node
 
-A `.node` file describes a program as a node. In `nodes/<name>.node`, declare `doc`, inputs, outputs, optional `no_outside_effect` and `run`. Programs run without a shell. `run` accepts space-separated words, an argument list, or `{args: [...]}`; quoting/shell characters require a list.
+A `.node` file describes a program as a node. In `nodes/<name>.node`, declare `doc`, inputs, outputs, optional `no_outside_effect` and `run`. Programs run without a shell. `run` accepts quoted words with `~/` expansion, an argument list, or `{args: [...]}`; shell operations are refused and literal shell characters require quoting or a list.
 
 | Binding | What it does |
 |---|---|
@@ -202,6 +202,7 @@ These are deliberate. Each keeps the model small.
 | Coordinating state shared between workflows | Only runs of one trigger are kept from overlapping. Plugins that keep state guard it themselves. |
 | Formulas inside references | References select data by path only; computation is a node. |
 | Enforced limits on what a plugin can do | Plugins are trusted code; install only what you trust. |
+| Full MCP conformance | Stdio, 2026-07-28, and earlier revisions for tools only; schemas are projected to iNode types without full validation, which MCP requires clients to perform. No HTTP, input rounds, sampling, roots, resource operations, prompts/completion, tasks, Apps or push catalog updates. File arguments use the server's JSON contract; inline wire frames are buffered and limited to 8 MiB. |
 | Managing iNode from another machine | The backend serves the local machine only. |
 | Automatic removal of stored files | Archive/move whole projects including `.inode/`, or remove unneeded projects. Deleting blobs breaks run records. |
 | Importing n8n or ComfyUI workflow files | Adapters reuse their capabilities, not their formats. |

@@ -156,7 +156,7 @@ func TestProcessPluginExampleAndLifecycle(t *testing.T) {
 		json.Unmarshal(frame, &text)
 		log += text
 	}
-	if !strings.Contains(log, "Program: python3 counter.py\n") || strings.Contains(log, "secret") {
+	if !strings.Contains(log, "Program: python3 counter.py\n") || !strings.Contains(log, "Starting program…\n") || strings.Contains(log, "secret") {
 		t.Fatalf("counter install log: %s", log)
 	}
 	pid := processPID(t, p.pluginDir("counter"))

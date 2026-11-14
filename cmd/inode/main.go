@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -19,9 +20,17 @@ import (
 	"go.yaml.in/yaml/v3"
 	"golang.org/x/term"
 	"inode"
+	"inode/adapters/mcp"
 )
 
-const usage = "usage: inode run <node> key=value ... | nodes | show <node> | check <workflow or JSON> | save <workflow> <version> <JSON> | runs [show|stop|follow|again <id>] | runs from <id> <step> [--start] | trigger add <kind> key=value ... run=<node> key=value ... | trigger list/on/off/remove/clear [name] | secret set <name> (prompt or stdin; one trailing line ending removed) | secret list | secret remove <name> | add <path or git URL> | remove <plugin> | plugins [inspect <path or git URL>] | start | stop | help | version"
+const usage = "usage: inode run <node> key=value ... | nodes | show <node> | check <workflow or JSON> | save <workflow> <version> <JSON> | runs [show|stop|follow|again <id>] | runs from <id> <step> [--start] | trigger add <kind> key=value ... run=<node> key=value ... | trigger list/on/off/remove/clear [name] | secret set <name> (prompt or stdin; one trailing line ending removed) | secret list | secret remove <name> | add <plugin source> | remove <plugin> | plugins [inspect <plugin source>] | start | stop | help | version"
+
+func init() {
+	inode.CommandPlugin = func(args []string) ([]string, string, string, error) {
+		executable, err := os.Executable()
+		return append([]string{executable, "mcp", "--"}, args...), "MCP tools from " + args[0], "MCP server command", err
+	}
+}
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -35,6 +44,9 @@ func main() {
 func command(ctx context.Context, args []string, out, diagnostic io.Writer) error {
 	if len(args) == 0 {
 		return fmt.Errorf("%s", usage)
+	}
+	if len(args) > 1 && args[0] == "mcp" && args[1] == "--" {
+		return mcp.Serve(ctx, args[2:], os.Stdin, out, diagnostic)
 	}
 	if len(args) == 1 {
 		switch args[0] {
@@ -134,6 +146,13 @@ func command(ctx context.Context, args []string, out, diagnostic io.Writer) erro
 		}
 		arguments = append(arguments, secret)
 	}
+	if operation == "add" {
+		source, err := confirmPlugin(ctx, client, arguments[0], out, diagnostic)
+		if err != nil || source == nil {
+			return err
+		}
+		arguments[0] = source
+	}
 	err = client.Call(ctx, operation, arguments, func(data json.RawMessage) error {
 		columns := map[string][]func(any) any{
 			"nodes":        {field("name"), field("doc")},
@@ -199,6 +218,90 @@ func command(ctx context.Context, args []string, out, diagnostic io.Writer) erro
 		_, err = fmt.Fprintln(out, "backend stopped")
 	}
 	return err
+}
+
+func confirmPlugin(ctx context.Context, client *inode.Client, source any, out, diagnostic io.Writer) (any, error) {
+	reader := bufio.NewScanner(os.Stdin)
+	ask := func(label string, value any) string {
+		if value != nil {
+			label += fmt.Sprintf(" [%v]", value)
+		}
+		fmt.Fprint(diagnostic, label+": ")
+		if !reader.Scan() {
+			return ""
+		}
+		if reader.Text() == "" && value != nil {
+			return fmt.Sprint(value)
+		}
+		return strings.TrimSpace(reader.Text())
+	}
+	answered := map[string]bool{}
+	for {
+		var plugin inode.Plugin
+		if err := client.Call(ctx, "plugins inspect", []any{source}, func(data json.RawMessage) error { return json.Unmarshal(data, &plugin) }); err != nil {
+			return nil, err
+		}
+		prepared := plugin.Preparation
+		if prepared == nil {
+			break
+		}
+		if plugin.Error != "" {
+			return nil, fmt.Errorf("%s", plugin.Error)
+		}
+		fields := slices.DeleteFunc(slices.Clone(prepared.Editable), func(field inode.Editable) bool { return answered[field.Name] })
+		if len(fields) == 0 {
+			fmt.Fprintln(out, "Program:", inode.CommandText(plugin.Process.([]any)), "\nWorking folder:", prepared.WorkingDir)
+			data, _ := json.MarshalIndent(prepared.Manifest, "", "  ")
+			fmt.Fprintln(out, string(data))
+			if answer := ask("Install plugin? [y/N]", nil); answer != "y" && answer != "yes" {
+				return nil, reader.Err()
+			}
+			break
+		}
+		data, _ := json.Marshal(prepared.Input)
+		request := inode.Values{}
+		json.Unmarshal(data, &request)
+		for _, field := range fields {
+			answered[field.Name] = true
+			switch field.Kind {
+			case "bindings":
+				var names []string
+				if err := client.Call(ctx, "secret list", nil, func(data json.RawMessage) error { return json.Unmarshal(data, &names) }); err != nil {
+					return nil, err
+				}
+				fmt.Fprintln(diagnostic, "Stored secrets:", strings.Join(names, ", "))
+				bindings, _ := field.Value.(map[string]any)
+				if bindings == nil {
+					bindings = map[string]any{}
+				}
+				for {
+					key := ask(field.Label+" — variable name (blank to finish)", nil)
+					if key == "" {
+						break
+					}
+					name := ask("Stored secret name", nil)
+					if !slices.Contains(names, name) {
+						return nil, fmt.Errorf("store secret %q first with inode secret set", name)
+					}
+					bindings[key] = name
+				}
+				request[field.Name] = bindings
+			default:
+				for _, key := range slices.Sorted(maps.Keys(field.Choices)) {
+					fmt.Fprintf(diagnostic, "%s: %s\n", key, field.Choices[key])
+				}
+				value := ask(field.Label, field.Value)
+				if value != "" {
+					request[field.Name] = value
+				}
+				if len(field.Choices) > 0 && field.Choices[value] == "" {
+					return nil, fmt.Errorf("choose one of the listed values for %s", field.Label)
+				}
+			}
+		}
+		source = request
+	}
+	return source, nil
 }
 
 func field(name string) func(any) any {

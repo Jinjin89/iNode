@@ -136,7 +136,7 @@ func (r *pluginProcess) start(ctx context.Context, p *Project, plugin Plugin) {
 		r.stdin.Close()
 		close(r.done)
 	}()
-	startup, cancel := context.WithTimeout(ctx, 5*time.Second)
+	startup, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	reply, err := r.call(startup, Values{"method": "describe"})
 	if err == nil {
@@ -168,6 +168,9 @@ func (r *pluginProcess) fail(err error) {
 		status = "could not start"
 	}
 	message := fmt.Sprintf("The program for plugin %q %s (%v). Runs that were in progress may or may not have finished. Add the plugin again.", r.name, status, err)
+	if err == context.DeadlineExceeded {
+		message = fmt.Sprintf("The program for plugin %q did not answer within 2 minutes. Add the plugin again.", r.name)
+	}
 	if tail := r.stderr.String(); tail != "" {
 		message += "\n" + tail
 	}

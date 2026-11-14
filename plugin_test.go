@@ -238,7 +238,7 @@ func TestPluginNames(t *testing.T) {
 }
 
 func TestPluginSetupArguments(t *testing.T) {
-	for _, setup := range []any{`python3 "one argument.py"`, "echo hi; touch marker", "echo $(touch marker)"} {
+	for _, setup := range []any{"echo hi; touch marker", "echo $(touch marker)"} {
 		data, err := json.Marshal(Plugin{Name: "tiny", Version: "1", Doc: "Test setup", Setup: setup})
 		if err != nil {
 			t.Fatal(err)
@@ -246,7 +246,7 @@ func TestPluginSetupArguments(t *testing.T) {
 		source := t.TempDir()
 		writeFiles(t, source, map[string]string{"plugin": string(data)})
 		p := project(t, nil)
-		if _, err := p.InspectPlugin(t.Context(), source); err == nil || !strings.Contains(err.Error(), "/plugin: setup:") || !strings.Contains(err.Error(), `setup: [program, "one argument"]`) {
+		if _, err := p.InspectPlugin(t.Context(), source); err == nil || !strings.Contains(err.Error(), "/plugin: setup:") || !strings.Contains(err.Error(), "argument list") {
 			t.Fatalf("unsafe setup: %v", err)
 		}
 	}

@@ -2,6 +2,7 @@ package inode
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -12,16 +13,17 @@ import (
 )
 
 type Plugin struct {
-	Name     string            `json:"name" yaml:"name"`
-	Version  string            `json:"version" yaml:"version"`
-	Source   string            `json:"source,omitempty" yaml:"source,omitempty"`
-	Doc      string            `json:"doc,omitempty" yaml:"doc,omitempty"`
-	Accesses []string          `json:"accesses,omitempty" yaml:"accesses,omitempty"`
-	Setup    any               `json:"setup,omitempty" yaml:"setup,omitempty"`
-	Process  any               `json:"process,omitempty" yaml:"process,omitempty"`
-	Env      map[string]string `json:"env,omitempty" yaml:"env,omitempty"`
-	State    string            `json:"state,omitempty" yaml:"-"`
-	Error    string            `json:"error,omitempty" yaml:"-"`
+	Name        string            `json:"name" yaml:"name"`
+	Version     string            `json:"version" yaml:"version"`
+	Source      string            `json:"source,omitempty" yaml:"source,omitempty"`
+	Doc         string            `json:"doc,omitempty" yaml:"doc,omitempty"`
+	Accesses    []string          `json:"accesses,omitempty" yaml:"accesses,omitempty"`
+	Setup       any               `json:"setup,omitempty" yaml:"setup,omitempty"`
+	Process     any               `json:"process,omitempty" yaml:"process,omitempty"`
+	Env         map[string]string `json:"env,omitempty" yaml:"env,omitempty"`
+	State       string            `json:"state,omitempty" yaml:"-"`
+	Error       string            `json:"error,omitempty" yaml:"-"`
+	Preparation *Prepared         `json:"preparation,omitempty" yaml:"-"`
 }
 
 func (plugin *Plugin) validate() error {
@@ -168,16 +170,48 @@ func (p *Project) fetchPlugin(ctx context.Context, source string) (Plugin, strin
 	return plugin, stage, err
 }
 
-func (p *Project) InspectPlugin(ctx context.Context, source string) (Plugin, error) {
-	plugin, stage, err := p.fetchPlugin(ctx, source)
+func (p *Project) preparePlugin(ctx context.Context, source any, install bool) (Plugin, string, error) {
+	prepared, err := prepareSource(p.dir, source)
+	if err != nil {
+		return Plugin{}, "", err
+	}
+	if len(prepared.Editable) == 0 {
+		return p.fetchPlugin(ctx, prepared.Input.Source)
+	}
+	plugin := Plugin{Preparation: &prepared, Source: prepared.Input.Name}
+	if prepared.Manifest != nil {
+		data, _ := json.Marshal(prepared.Manifest)
+		err = decode(data, &plugin)
+		if err == nil {
+			err = plugin.validate()
+		}
+	}
+	if !install {
+		if err != nil {
+			plugin.Error = err.Error()
+		}
+		return plugin, "", nil
+	}
+	if err != nil {
+		return plugin, "", err
+	}
+	folder, err := prepared.Write()
+	if err != nil {
+		return Plugin{}, "", err
+	}
+	return p.fetchPlugin(ctx, folder)
+}
+
+func (p *Project) InspectPlugin(ctx context.Context, source any) (Plugin, error) {
+	plugin, stage, err := p.preparePlugin(ctx, source, false)
 	if err == nil {
 		err = os.RemoveAll(stage)
 	}
 	return plugin, err
 }
 
-func (p *Project) Add(ctx context.Context, source string, out io.Writer) error {
-	plugin, stage, err := p.fetchPlugin(ctx, source)
+func (p *Project) Add(ctx context.Context, source any, out io.Writer) error {
+	plugin, stage, err := p.preparePlugin(ctx, source, true)
 	if err != nil {
 		return err
 	}
@@ -191,7 +225,7 @@ func (p *Project) Add(ctx context.Context, source string, out io.Writer) error {
 		}
 	}
 	if plugin.Process != nil {
-		if _, err := fmt.Fprintf(out, "Program: %s\n", commandText(plugin.Process.([]any))); err != nil {
+		if _, err := fmt.Fprintf(out, "Program: %s\n", CommandText(plugin.Process.([]any))); err != nil {
 			return err
 		}
 		for _, key := range keys(plugin.Env) {
@@ -225,6 +259,11 @@ func (p *Project) Add(ctx context.Context, source string, out io.Writer) error {
 		p.host.mu.Lock()
 		delete(p.host.processes, plugin.Name)
 		p.host.mu.Unlock()
+	}
+	if plugin.Process != nil && p.host != nil {
+		if _, err := fmt.Fprintln(out, "Starting program…"); err != nil {
+			return err
+		}
 	}
 	return p.load()
 }

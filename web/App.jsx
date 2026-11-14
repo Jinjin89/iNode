@@ -35,6 +35,7 @@ export function App() {
   const [tutorial, setTutorial] = useState('');
   const [runFilter, setRunFilter] = useState('');
   const [installLog, setInstallLog] = useState('');
+  const [pluginDraft, setPluginDraft] = useState(null);
   const [pluginChanges, setPluginChanges] = useState({});
   const [runInputs, setRunInputs] = useState({});
   const [enterInputs, setEnterInputs] = useState(false);
@@ -252,7 +253,7 @@ export function App() {
     </div> : screen === 'Runs' ? <Runs showRun={showRun} fail={setError} trigger={runFilter} /> : screen === 'When' ?
       <When catalog={catalog} onSave={saveAs} perform={perform} pending={pending} ask={ask} fail={setError} showRun={showRun} showRuns={name => { setRunFilter(name); setScreen('Runs'); }} /> : screen === 'Secrets' ?
       <Secrets perform={perform} pending={pending} ask={ask} fail={setError} /> :
-      <Plugins catalog={catalog} setCatalog={setCatalog} perform={perform} pending={pending} ask={ask} fail={setError} log={installLog} setLog={setInstallLog} changed={pluginChanges} setChanged={setPluginChanges} />}
+      <Plugins catalog={catalog} setCatalog={setCatalog} perform={perform} pending={pending} ask={ask} fail={setError} log={installLog} setLog={setInstallLog} changed={pluginChanges} setChanged={setPluginChanges} draft={pluginDraft} setDraft={setPluginDraft} showSecrets={() => setScreen('Secrets')} />}
     {guide && <Guide text={tutorial} onClose={() => setGuide(false)} />}</div>
     {preview && <Dialog className="box-editor" label="Run from here preview" onClose={() => setPreview(null)}>
         <div className="toolbar"><strong>Run from here</strong><button disabled={pending.includes('from')} onClick={() => from(preview.source.step, true)}>Start run</button><button disabled={pending.includes('from')} onClick={() => setPreview(null)}>Back</button></div>
