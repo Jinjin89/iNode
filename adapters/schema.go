@@ -10,29 +10,19 @@ import (
 
 type Object = map[string]any
 
-// Inputs gives one port per property when every property is required and legally named, otherwise one arguments object.
-func Inputs(schema Object) (Object, bool) {
-	if !closed(schema) {
-		return Object{"arguments": "object"}, false
-	}
-	inputs := Object{}
+// Ports projects each property, escaping its name and preserving whether it may be absent.
+func Ports(schema Object) Object {
+	ports := Object{}
 	properties, _ := schema["properties"].(Object)
+	required, _ := schema["required"].([]any)
 	for field, value := range properties {
-		inputs[field] = Project(value)
+		var port any = Project(value)
+		if !slices.Contains(required, any(field)) {
+			port = Object{"type": port, "optional": true}
+		}
+		ports[Escape(field)] = port
 	}
-	return inputs, true
-}
-
-// Arguments undoes Inputs: the named ports themselves, or the one arguments object.
-func Arguments(inputs Object, named bool) (Object, error) {
-	if named {
-		return inputs, nil
-	}
-	args, ok := inputs["arguments"].(Object)
-	if !ok {
-		return nil, fmt.Errorf("arguments must be an object")
-	}
-	return args, nil
+	return ports
 }
 
 func closed(schema Object) bool {

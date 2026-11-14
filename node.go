@@ -19,13 +19,16 @@ type Values = map[string]any
 type Port struct {
 	Type            Type `json:"type" yaml:"type"`
 	Default         any  `json:"default,omitempty" yaml:"default,omitempty"`
+	Optional        bool `json:"optional,omitempty" yaml:"optional,omitempty"`
 	NoOutsideEffect bool `json:"no_outside_effect,omitempty" yaml:"no_outside_effect,omitempty"`
 }
 
 type Ports map[string]Port
 
+func (port Port) required() bool { return !port.Optional && port.Default == nil }
+
 func (port Port) MarshalYAML() (any, error) {
-	if port.Default == nil && !port.NoOutsideEffect {
+	if port.required() && !port.NoOutsideEffect {
 		return port.Type.String(), nil
 	}
 	type declaration Port
@@ -61,17 +64,25 @@ func (ports *Ports) UnmarshalJSON(data []byte) error {
 	*ports = Ports{}
 	for _, name := range keys(raw) {
 		var declaration struct {
-			Type    Type            `json:"type"`
-			Default any             `json:"default"`
-			Kind    json.RawMessage `json:"kind"`
-			Item    json.RawMessage `json:"item"`
-			Fields  json.RawMessage `json:"fields"`
+			Type     Type            `json:"type"`
+			Optional bool            `json:"optional"`
+			Default  json.RawMessage `json:"default"`
+			Kind     json.RawMessage `json:"kind"`
+			Item     json.RawMessage `json:"item"`
+			Fields   json.RawMessage `json:"fields"`
 		}
 		var err error
 		if raw[name][0] == '"' {
 			err = json.Unmarshal(raw[name], &declaration.Type)
 		} else {
 			err = decode(raw[name], &declaration)
+		}
+		if err == nil && declaration.Optional && len(declaration.Default) > 0 {
+			err = fmt.Errorf("choose optional or a default")
+		}
+		port := Port{Type: declaration.Type, Optional: declaration.Optional}
+		if err == nil && len(declaration.Default) > 0 {
+			err = json.Unmarshal(declaration.Default, &port.Default)
 		}
 		if err == nil && declaration.Type.Name == "" {
 			err = fmt.Errorf("specify the port's type")
@@ -82,7 +93,7 @@ func (ports *Ports) UnmarshalJSON(data []byte) error {
 		if err != nil {
 			return Problem{Input: name, Message: err.Error()}
 		}
-		(*ports)[name] = Port{Type: declaration.Type, Default: declaration.Default}
+		(*ports)[name] = port
 	}
 	return nil
 }

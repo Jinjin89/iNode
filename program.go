@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -55,8 +56,21 @@ func argumentList(value any, key string) ([]any, error) {
 	return nil, fmt.Errorf("%s: supply a program or an argument list, such as %s: [wc, -w]", key, key)
 }
 
+var unsetInput = errors.New("input is not filled; use a declared input path")
+
 func programValue(value any, inputs Values, key string) (any, error) {
-	result, _, err := resolve(value, anyType, nil, Values{"inputs": inputs})
+	result, err := walk(value, anyType, nil, func(value any, _ Type, _ valuePath) (any, error) {
+		if text, ok := value.(string); ok {
+			if parts := referenceParts(text); len(parts) > 1 && parts[0] == "inputs" {
+				if _, filled := inputs[parts[1]]; !filled {
+					return nil, unsetInput
+				}
+			}
+			resolved, _, err := resolve(text, anyType, nil, Values{"inputs": inputs})
+			return resolved, err
+		}
+		return value, nil
+	})
 	if err != nil {
 		if problem, ok := err.(Problem); ok {
 			err = fmt.Errorf("%s", problem.Message)
@@ -121,13 +135,14 @@ func arguments(args []any, inputs Values, key string, checking bool) ([]string, 
 			where += ".value"
 		}
 		value, err := programValue(raw, inputs, where)
+		items, list := value.([]any)
+		if !checking && (errors.Is(err, unsetInput) || list && len(items) == 0) {
+			continue
+		}
 		if err != nil {
 			return nil, err
 		}
 		t := typeOf(value)
-		if items, ok := value.([]any); !checking && ok && len(items) == 0 {
-			continue
-		}
 		if containsType(t, "secret") {
 			return nil, fmt.Errorf("%s: secrets cannot be arguments; bind the input through stdin or env instead", where)
 		}
@@ -143,7 +158,6 @@ func arguments(args []any, inputs Values, key string, checking bool) ([]string, 
 			}
 			continue
 		}
-		items, list := value.([]any)
 		if !list {
 			items = []any{value}
 		}
@@ -257,7 +271,13 @@ func (p program) run(ctx context.Context, project *Project, dir string, inputs V
 				return nil, err
 			}
 			if referenceParts(p.Files[name])[0] == "inputs" {
-				value, _ := programValue(p.Files[name], inputs, "run.files."+name)
+				value, err := programValue(p.Files[name], inputs, "run.files."+name)
+				if errors.Is(err, unsetInput) {
+					continue
+				}
+				if err != nil {
+					return nil, err
+				}
 				source, err := os.Open(project.blob(value.(fileRef)))
 				if err != nil {
 					return nil, err
@@ -273,6 +293,9 @@ func (p program) run(ctx context.Context, project *Project, dir string, inputs V
 	var input any = inputs
 	if p.Stdin != nil {
 		input, err = programValue(p.Stdin, inputs, "run.stdin")
+		if errors.Is(err, unsetInput) {
+			input, err = "", nil
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -319,6 +342,9 @@ func (p program) run(ctx context.Context, project *Project, dir string, inputs V
 	env := []string{}
 	for _, name := range keys(p.Env) {
 		value, err := programValue(p.Env[name], inputs, "run.env."+name)
+		if errors.Is(err, unsetInput) {
+			continue
+		}
 		if err != nil {
 			return nil, err
 		}

@@ -14,7 +14,7 @@ primitive_values = [None, False, 0]
 closed = lambda fields: dict(type='object', properties=fields, required=list(fields), additionalProperties=False)
 text = closed({'text': {'type': 'string'}})
 tools = [dict(name=name, description='Test '+name, inputSchema=text, outputSchema=text) for name in ['echo', 'media.render']]
-for name, schema in [('optional', dict(type='object', properties={'x': dict(type='string')}, additionalProperties=False)), ('nested', closed({'items': dict(type='array', items=closed({'ok': dict(type='boolean')}))})), ('enum', closed({'state': dict(type='string', enum=['ready'])})), ('union', closed({'value': dict(type=['string','null'])})), ('unresolved', closed({'value': {'$ref': 'https://example.invalid/schema'}}))]:
+for name, schema in [('optional', dict(type='object', properties={'x': dict(type='string'), 'a.b': dict(type='string'), 'filter[name]': dict(type='number')}, additionalProperties=False)), ('nested', closed({'items': dict(type='array', items=closed({'ok': dict(type='boolean')}))})), ('enum', closed({'state': dict(type='string', enum=['ready'])})), ('union', closed({'value': dict(type=['string','null'])})), ('unresolved', closed({'value': {'$ref': 'https://example.invalid/schema'}}))]:
  tools.append(dict(name=name, description='Schema '+name, inputSchema=schema))
 for name in ['odd.=猫%', 'error', 'protocol', 'slow', 'reverse', 'crash', 'garbage', 'interactive', 'callback', 'missing', 'primitive', 'task-only', 'app-only']:
  tools.append(dict(name=name, description='Test '+name, inputSchema=dict(type='object', additionalProperties=False)))

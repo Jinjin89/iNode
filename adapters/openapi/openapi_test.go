@@ -103,7 +103,7 @@ func TestOperations(t *testing.T) {
 		want := map[string]object{
 			"pets%2Eget":            {"X-Trace": "text", "id": "number", "verbose": "bool"},
 			"put%2Fpets%2F%7Bid%7D": {"id": "number", "body": "object{name: text, parent: any}"},
-			"listPets":              {"arguments": "object"},
+			"listPets":              {"limit": "number", "tag": object{"type": "list of text", "optional": true}, "a%2Eb": object{"type": "text", "optional": true}, "filter%5Bname%5D": object{"type": "text", "optional": true}},
 			"photo":                 {},
 			"fail":                  {},
 			"slow":                  {},
@@ -115,7 +115,7 @@ func TestOperations(t *testing.T) {
 				t.Fatalf("%s %s: %#v", source[0], name, node)
 			}
 		}
-		if len(nodes) != len(want) || nodes["pets%2Eget"].(object)["doc"] != "Fetch one pet.\nGET /pets/{id}" || nodes["listPets"].(object)["doc"] != "GET /pets\nArguments: limit: number, tag?: list of text" {
+		if len(nodes) != len(want) || nodes["pets%2Eget"].(object)["doc"] != "Fetch one pet.\nGET /pets/{id}" || nodes["listPets"].(object)["doc"] != "GET /pets" {
 			t.Fatalf("%s catalog: %#v", source[0], nodes)
 		}
 		echo := func(node string, inputs object) object {
@@ -135,13 +135,19 @@ func TestOperations(t *testing.T) {
 		if got := echo("put%2Fpets%2F%7Bid%7D", object{"id": "a/b", "body": object{"name": "Rex"}}); got["method"] != "PUT" || got["path"] != "/v1/pets/a/b" || got["query"] != "api_key=private+key" || got["body"] != `{"name":"Rex"}` || got["kind"] != "application/json" || got["authorization"] != "" {
 			t.Fatalf("body and query key: %#v", got)
 		}
-		if got := echo("listPets", object{"arguments": object{"limit": 2, "tag": []any{"a", "b"}}}); got["query"] != "limit=2&tag=a&tag=b" || got["authorization"] != "" {
-			t.Fatalf("arguments object without security: %#v", got)
+		if got := echo("listPets", object{"limit": 2, "tag": []any{"a", "b"}}); got["query"] != "limit=2&tag=a&tag=b" || got["authorization"] != "" {
+			t.Fatalf("named inputs without security: %#v", got)
+		}
+		if got := echo("listPets", object{"limit": 0}); got["query"] != "limit=0" {
+			t.Fatalf("unset optional inputs sent: %#v", got)
+		}
+		if got := echo("listPets", object{"limit": 2, "a%2Eb": "path", "filter%5Bname%5D": "Rex"}); got["query"] != "a.b=path&filter%5Bname%5D=Rex&limit=2" {
+			t.Fatalf("original parameter names: %#v", got)
 		}
 		if got := echo("basic", object{}); got["authorization"] != "Basic dXNlcjpwYXNz" {
 			t.Fatalf("basic: %#v", got)
 		}
-		if reply := call(object{"id": "3", "method": "run", "node": "listPets", "inputs": object{"arguments": object{}}}); !strings.Contains(reply["error"].(string), "arguments needs limit") {
+		if reply := call(object{"id": "3", "method": "run", "node": "listPets", "inputs": object{}}); !strings.Contains(reply["error"].(string), "supply input limit") {
 			t.Fatalf("required argument: %#v", reply)
 		}
 	}

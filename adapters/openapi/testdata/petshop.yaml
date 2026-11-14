@@ -30,6 +30,8 @@ paths:
       parameters:
         - {name: tag, in: query, schema: {type: array, items: {type: string}}}
         - {name: limit, in: query, required: true, schema: {type: integer}}
+        - {name: a.b, in: query, schema: {type: string}}
+        - {name: 'filter[name]', in: query, schema: {type: string}}
   /photo:
     get: {operationId: photo}
   /fail:

@@ -374,6 +374,7 @@ describe('canvas building', () => {
     expect(asked.inputs?.text2).toEqual({ type: 'text', default: 'hi' });
     expect(asked.steps?.a.in?.text).toBe('=inputs.text2');
     expect(expose(tiny, 'inputs', 'a', 'prefix', { type: 'text', kind: 'text' }).inputs?.prefix).toEqual({ type: 'text' });
+    expect(expose(tiny, 'inputs', 'a', 'prefix', { type: 'text', optional: true }).inputs?.prefix).toEqual({ type: 'text' });
     for (const written of ['written', '=b.text', '==literal']) {
       const replaced = expose(set(tiny, ['steps', 'a', 'in', 'text'], written), 'inputs', 'a', 'text', { type: 'text' });
       expect(replaced.inputs?.text2).toEqual({ type: 'text' });

@@ -93,7 +93,7 @@ export function NodeList({ catalog, onAdd, onOpen, opening }) {
 }
 
 function FieldLabel({ label, port, actions }) {
-  return <div className="field-label nodrag" tabIndex={actions ? 0 : undefined}><span title={String(label)}>{label}</span><small>{type(port)}</small>{actions}</div>;
+  return <div className="field-label nodrag" tabIndex={actions ? 0 : undefined}><span title={String(label)}>{label}</span><small>{type(port)}{port.optional && ' · optional'}</small>{actions}</div>;
 }
 
 export function Field({ label, port = {}, value, onChange, catalog = [], path = [], socket, descriptions = {}, issues = [], references = true, onOpen, onSave, propose, trail, children, item = false, placeholder, required = false, closed = false }) {

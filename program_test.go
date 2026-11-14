@@ -384,7 +384,7 @@ func TestProgramBindingProblems(t *testing.T) {
 		command         any
 		key, help       string
 	}{
-		{"unknown argument input", Values{"text": "text"}, Values{}, []any{"echo", "=inputs.absent"}, "run.args.1", "choose"},
+		{"unknown argument input", Values{"text": "text"}, Values{}, []any{"echo", "=inputs.absent"}, "run.args.1", "declared input path"},
 		{"unknown stdin input", Values{}, Values{}, Values{"args": []any{"cat"}, "stdin": "=inputs.absent"}, "run.stdin", "declared input path"},
 		{"unknown env input", Values{}, Values{}, Values{"args": []any{"cat"}, "env": Values{"TOKEN": "=inputs.absent"}}, "run.env.TOKEN", "declared input path"},
 		{"secret argument", Values{"token": "secret"}, Values{}, []any{"echo", "=inputs.token"}, "run.args.1", "stdin or env"},

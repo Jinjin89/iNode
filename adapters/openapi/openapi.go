@@ -26,7 +26,6 @@ type object = adapters.Object
 type operation struct {
 	method, path string
 	parameters   map[string]object
-	named        bool
 	security     []any
 }
 
@@ -179,19 +178,13 @@ func load(ctx context.Context, source, base string) (*api, error) {
 					o.parameters["body"], properties["body"] = object{"in": "body", "required": body["required"]}, media["schema"]
 				}
 			}
-			about, arguments := o.method+" "+path, []string{}
+			about := o.method + " " + path
 			for name, parameter := range o.parameters {
-				mark := "?"
 				if parameter["required"] == true {
-					required, mark = append(required, name), ""
+					required = append(required, name)
 				}
-				arguments = append(arguments, name+mark+": "+adapters.Project(properties[name]))
 			}
-			inputs, named := adapters.Inputs(object{"type": "object", "additionalProperties": false, "properties": properties, "required": required})
-			if o.named = named; !named {
-				slices.Sort(arguments)
-				about += "\nArguments: " + strings.Join(arguments, ", ")
-			}
+			inputs := adapters.Ports(object{"properties": properties, "required": required})
 			for _, key := range []string{"summary", "description"} {
 				if text, _ := op[key].(string); text != "" {
 					about = text + "\n" + about
@@ -235,15 +228,11 @@ func (a *api) run(ctx context.Context, node string, inputs object, dir string) (
 	if !ok {
 		return nil, fmt.Errorf("unknown operation")
 	}
-	args, err := adapters.Arguments(inputs, o.named)
-	if err != nil {
-		return nil, err
-	}
 	path, query, header, body := o.path, url.Values{}, http.Header{}, io.Reader(nil)
 	for name, parameter := range o.parameters {
-		value := args[name]
+		value := inputs[adapters.Escape(name)]
 		if value == nil && parameter["required"] == true {
-			return nil, fmt.Errorf("arguments needs %s", name)
+			return nil, fmt.Errorf("supply input %s", name)
 		}
 		switch items, _ := value.([]any); {
 		case value == nil:

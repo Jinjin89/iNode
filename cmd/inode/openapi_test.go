@@ -110,6 +110,15 @@ func TestOpenAPIPluginAndSourceKinds(t *testing.T) {
 	if err != nil || !strings.Contains(text, `"path": "/v1/pets/7"`) || !strings.Contains(text, `"query": "verbose=true"`) || !strings.Contains(text, "Bearer [secret shop]") {
 		t.Fatalf("run: %s %s, %v", text, diag, err)
 	}
+	text, diag, err = call("", "show", "shop.listPets")
+	var node inode.Node
+	if err != nil || json.Unmarshal([]byte(text), &node) != nil || len(node.Inputs) != 4 || !node.Inputs["tag"].Optional || !node.Inputs["a%2Eb"].Optional || node.Inputs["limit"].Optional {
+		t.Fatalf("named optional ports in show: %s %s, %v", text, diag, err)
+	}
+	text, diag, err = call("", "run", "shop.listPets", "limit=0")
+	if err != nil || !strings.Contains(text, `"query": "limit=0"`) {
+		t.Fatalf("optional inputs omitted by CLI: %s %s, %v", text, diag, err)
+	}
 	text, diag, err = call("", "run", "shop.photo")
 	if err != nil || !strings.Contains(text, `"$file"`) || !strings.Contains(text, `"name": "body.png"`) {
 		t.Fatalf("file: %s %s, %v", text, diag, err)

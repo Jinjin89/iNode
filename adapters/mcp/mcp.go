@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/exec"
 	"slices"
@@ -198,7 +199,7 @@ func (p *peer) catalog(ctx context.Context) (map[string]object, map[string]objec
 			if !ok {
 				return nil, nil, fmt.Errorf("tool %s needs an inputSchema object", name)
 			}
-			inputs, named := adapters.Inputs(schema)
+			inputs := adapters.Ports(schema)
 			response := "object"
 			output, structured := tool["outputSchema"]
 			if structured {
@@ -210,7 +211,7 @@ func (p *peer) catalog(ctx context.Context) (map[string]object, map[string]objec
 			}
 			raw, _ := json.Marshal(schema)
 			nodes[key] = object{"doc": doc + "\nMCP tool: " + name + "\nInput schema: " + string(raw), "inputs": inputs, "outputs": object{"result": "object{response: " + response + ", files: list of file}"}}
-			tools[key] = object{"name": name, "named": named, "structured": structured, "unsupported": unsupported(tool)}
+			tools[key] = object{"name": name, "structured": structured, "unsupported": unsupported(tool)}
 		}
 		catalogData, _ := json.Marshal(nodes)
 		if len(catalogData) > 1<<20 {
@@ -239,9 +240,10 @@ func (p *peer) run(ctx context.Context, tool object, inputs object, dir string) 
 	if tool["unsupported"] == true {
 		return nil, fmt.Errorf("task-only tools and MCP Apps are unsupported")
 	}
-	args, err := adapters.Arguments(inputs, tool["named"] == true)
-	if err != nil {
-		return nil, err
+	args := object{}
+	for name, value := range inputs {
+		name, _ = url.PathUnescape(name)
+		args[name] = value
 	}
 	result, err := p.call(ctx, "tools/call", object{"name": tool["name"], "arguments": args})
 	if err != nil {

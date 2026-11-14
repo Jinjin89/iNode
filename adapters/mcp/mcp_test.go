@@ -148,7 +148,8 @@ func TestAdapterVersionsAndCalls(t *testing.T) {
 			if len(nodes) != 20 {
 				t.Fatalf("paginated nodes: %d", len(nodes))
 			}
-			if nodes["echo"].(object)["inputs"].(object)["text"] != "text" || nodes["optional"].(object)["inputs"].(object)["arguments"] != "object" {
+			optional := nodes["optional"].(object)["inputs"].(object)
+			if nodes["echo"].(object)["inputs"].(object)["text"] != "text" || len(optional) != 3 || optional["x"].(object)["optional"] != true || optional["a%2Eb"].(object)["type"] != "text" || optional["filter%5Bname%5D"].(object)["optional"] != true {
 				t.Fatalf("inputs: %#v", nodes)
 			}
 			if nodes["echo"].(object)["no_outside_effect"] == true || !strings.Contains(nodes["enum"].(object)["doc"].(string), "ready") {
@@ -161,7 +162,8 @@ func TestAdapterVersionsAndCalls(t *testing.T) {
 				{"one", "echo", object{"text": "literal JSON {\"x\":1}"}},
 				{"image", "media%2Erender", object{"text": "large"}},
 				{"odd", "odd%2E%3D%E7%8C%AB%25", object{}},
-				{"optional", "optional", object{"arguments": object{}}},
+				{"optional", "optional", object{}},
+				{"optional-filled", "optional", object{"x": "", "a%2Eb": "path", "filter%5Bname%5D": 0}},
 				{"primitive", "primitive", object{}},
 				{"primitive-false", "primitive", object{}},
 				{"primitive-zero", "primitive", object{}},
@@ -172,6 +174,16 @@ func TestAdapterVersionsAndCalls(t *testing.T) {
 				}
 				result := reply["outputs"].(object)["result"].(object)
 				response := result["response"].(object)
+				if call.id == "optional" && response["content"].([]any)[0].(object)["text"] != "{}" {
+					t.Fatalf("unset optional inputs sent: %#v", response)
+				}
+				if call.id == "optional-filled" && response["content"].([]any)[0].(object)["text"] != `{"a.b": "path", "filter[name]": 0, "x": ""}` {
+					var args object
+					json.Unmarshal([]byte(response["content"].([]any)[0].(object)["text"].(string)), &args)
+					if args["x"] != "" || args["a.b"] != "path" || args["filter[name]"] != float64(0) || len(args) != 3 {
+						t.Fatalf("original parameter names/zero values: %#v", response)
+					}
+				}
 				if call.id == "one" && response["content"].([]any)[0].(object)["text"] != call.inputs["text"] {
 					t.Fatal("text was parsed or changed")
 				}

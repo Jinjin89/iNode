@@ -8,7 +8,7 @@ Connect nodes into a **workflow**. Save that workflow and it becomes a node too,
 - A **run** is cooking the recipe once. iNode keeps what went in and came out of every step, so you can look afterwards.
 - A **trigger** is like an alarm clock. It says, “When this happens, run that.”
 
-A **step** is one use of a node in a workflow.
+A **step** is one use of a node in a workflow. An input marked optional may be left empty.
 
 A **box** is a slot on a step that holds another node for that step to call; a node in a box never runs by itself.
 

@@ -25,7 +25,7 @@ Two supporting words are not concepts of their own. A **step** is a node placed 
 
 ## Node
 
-A node has a name (`plugin.name`), a one-sentence description, named typed inputs (each required or with a default), and named typed outputs. When run, it receives all its inputs and either returns all its outputs or fails.
+A node has a name (`plugin.name`), a one-sentence description, named typed inputs (each required, optional or with a default), and named typed outputs. It receives filled inputs and returns every output or fails.
 
 - **No separate configuration.** An input is filled with a value you write or with a reference to another output. A node with some inputs filled in is still a node, with fewer open inputs.
 - **Fixed ports.** Inputs and outputs never change with the values given. A capability with several modes becomes several nodes. Data whose shape is only known at run time (query rows, spreadsheet columns) travels inside one `object` or `list` port.
@@ -48,7 +48,7 @@ Types are names, checked when connecting:
 
 ## Workflow
 
-A workflow is a node made of steps. Each step's inputs are filled by values or by references to other steps (`=page.body`, with dotted paths into data such as `=resp.json.user.name`, where a number picks a list item: `=feed.items.0.title`). `=inputs.url` refers to the workflow's own input. A reference can also sit inside a written list or object. A text that really starts with `=` is written with `==`. Step and port names contain no dots. Any input can be **exposed** as an input of the workflow, and any output as an output of the workflow, which is what makes the workflow a node.
+A workflow is a node made of steps, with required or defaulted inputs. Each step's inputs are filled by values or by references to other steps (`=page.body`, with dotted paths into data such as `=resp.json.user.name`, where a number picks a list item: `=feed.items.0.title`). `=inputs.url` refers to the workflow's own input. A reference can also sit inside a written list or object. A text that really starts with `=` is written with `==`. Step and port names contain no dots. Any input can be **exposed** as an input of the workflow, and any output as an output of the workflow, which is what makes the workflow a node.
 
 **A node in a `node` input is not a step.** It does not run by itself; the receiving step calls it. In the frontend the input is a box. A box holds a saved node or steps built directly inside it (an inline workflow, the same thing without a file name). Anything inside the box runs when the box's owner calls it.
 
@@ -180,7 +180,7 @@ A `.node` file describes a program as a node. In `nodes/<name>.node`, declare `d
 | `env: {TOKEN: =inputs.token}` | Scalars; secrets only here or stdin. |
 | `files: {in.md: =inputs.source, out.html: =outputs.html}` | Stage/collect files under relative names used in args; one producer per output. |
 
-Without bindings, streams carry JSON objects of all inputs/outputs. File bindings leave JSON stdout for remaining outputs, or unused when none remain. `files` selects a fresh private folder, removed afterwards; otherwise programs run in the description folder. Bad bindings fail at load; nonzero exit fails with bounded scrubbed stderr. Plugin `setup` uses the same string/list rule. `file.save(file, path)` copies a result to disk; text `file.read`/`file.write` stay unchanged. File inputs and file.save paths accept `~/` or start at the project folder. See [file forms](tutorial.md#the-two-file-forms).
+Without bindings, streams carry JSON objects of all inputs/outputs. File bindings leave JSON stdout for remaining outputs, or unused when none remain. `files` selects a fresh private folder, removed afterwards; otherwise programs run in the description folder. Bindings of unset inputs are omitted; bad bindings fail at load; nonzero exit fails with bounded scrubbed stderr. Plugin `setup` uses the same string/list rule. `file.save(file, path)` copies a result to disk; text `file.read`/`file.write` stay unchanged. File inputs and file.save paths accept `~/` or start at the project folder. See [file forms](tutorial.md#the-two-file-forms).
 
 ## Limits
 
@@ -203,7 +203,7 @@ These are deliberate. Each keeps the model small.
 | Formulas inside references | References select data by path only; computation is a node. |
 | Enforced limits on what a plugin can do | Plugins are trusted code; install only what you trust. |
 | Full MCP conformance | Stdio, 2026-07-28, and earlier revisions for tools only; schemas are projected to iNode types without full validation, which MCP requires clients to perform. No HTTP, input rounds, sampling, roots, resource operations, prompts/completion, tasks, Apps or push catalog updates. File arguments use the server's JSON contract; inline wire frames are buffered and limited to 8 MiB. |
-| Full OpenAPI coverage | OpenAPI 3 documents up to 8 MiB with local `$ref`s; an operation with any optional parameter takes one `arguments` object, and inputs are not validated against the schema. JSON request bodies only; JSON and text responses up to 8 MiB are data, other content becomes files, a status of 400 or above fails the run, and response headers are not returned. Only GET and HEAD are marked as having no outside effect. Credentials are http bearer/basic and header/query API keys, each read from the variable named after its security scheme; no OAuth flows, cookies or mutual TLS. |
+| Full OpenAPI coverage | OpenAPI 3 documents up to 8 MiB with local `$ref`s; inputs are not validated against the schema. JSON request bodies only; JSON and text responses up to 8 MiB are data, other content becomes files, a status of 400 or above fails the run, and response headers are not returned. Only GET and HEAD are marked as having no outside effect. Credentials are http bearer/basic and header/query API keys, each read from the variable named after its security scheme; no OAuth flows, cookies or mutual TLS. |
 | Managing iNode from another machine | The backend serves the local machine only. |
 | Automatic removal of stored files | Archive/move whole projects including `.inode/`, or remove unneeded projects. Deleting blobs breaks run records. |
 | Importing n8n or ComfyUI workflow files | Adapters reuse their capabilities, not their formats. |

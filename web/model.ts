@@ -1,5 +1,5 @@
 export type Values = Record<string, any>;
-export type Port = string | { type: string; kind?: string; item?: Port; fields?: Record<string, Port>; default?: any };
+export type Port = string | { type: string; kind?: string; item?: Port; fields?: Record<string, Port>; default?: any; optional?: boolean };
 export type Definition = string | Workflow;
 export type Step = { use: Definition; in?: Values; after?: string[] };
 export type Workflow = { doc?: string; inputs?: Record<string, Port>; steps?: Record<string, Step>; outputs?: Values; view?: Values };
