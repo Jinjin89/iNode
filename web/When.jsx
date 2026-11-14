@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Field, Messages, useReply } from './Canvas';
+import { Field, Messages, useProposal, useReply } from './Canvas';
 import { call, op } from './client';
-import { content, emptyReport, inputs, problems, set, type } from './model';
+import { content, emptyReport, inputs, problems, set } from './model';
 
-export function When({ catalog, perform, pending, ask, fail, showRun, showRuns }) {
+export function When({ catalog, onSave, perform, pending, ask, fail, showRun, showRuns }) {
   const [rows, setRows] = useState([]);
   const [draft, edit] = useState({ inputs: {}, steps: { event: { use: '', in: {} }, run: { use: '', in: {}, after: ['event'] } }, outputs: {} });
+  const [notice, propose] = useProposal(draft, edit);
   const [checked, setChecked] = useState({ document: '', report: emptyReport });
   const [submitted, submit] = useState(null);
   const key = content(draft), report = checked.report;
@@ -33,6 +34,7 @@ export function When({ catalog, perform, pending, ask, fail, showRun, showRuns }
   const reason = choosing ? 'Choose when and what to run' : fresh && report.problems.length ? 'Fix the marked inputs' : '';
   return <section className="when">
     <h1>When</h1><p>Triggers start runs when something happens. Add one below, then switch it on.</p>
+    {notice && <p className="notice problem" role="alert">{notice.message}</p>}
     {rows.length > 0 && <div className="table-scroll"><table>
       <thead><tr><th>Trigger</th><th>On/off</th><th>Current run</th><th>Waiting</th><th>Last run</th><th>Last failure</th><th>Actions</th></tr></thead>
       <tbody>{rows.map(row => {
@@ -62,8 +64,7 @@ export function When({ catalog, perform, pending, ask, fail, showRun, showRuns }
             </select>{step.use && <><p>{node?.doc}</p>
             <Messages items={fresh ? problems(report, '(inline)/' + key, 'use') : []} />
             {Object.entries(ports).map(([name, port]) => <div className="port" key={name}>
-              <label>{name}<small>{type(port)}</small></label>
-              <Field port={port} value={step.in[name]} catalog={catalog} onChange={next => edit(set(draft, ['steps', key, 'in', name], next))} />
+              <Field label={name} port={port} value={step.in[name]} catalog={catalog} path={['steps', key, 'in', name]} onSave={onSave} propose={propose} onChange={next => edit(set(draft, ['steps', key, 'in', name], next))} />
               {key === 'run' && <select aria-label={'Event output for ' + name} value="" onChange={event => edit(set(draft, ['steps', key, 'in', name], '=event.' + event.target.value))}>
                 <option value="" disabled>Use event output</option>{Object.keys(event?.outputs || {}).map(name => <option key={name}>{name}</option>)}
               </select>}

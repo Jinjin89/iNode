@@ -1,7 +1,7 @@
 import { useEffect, useReducer, useRef, useState } from 'react';
 import { Canvas, Dialog, Field, useReply } from './Canvas';
 import { call, op } from './client';
-import { content, emptyReport, history, inputValues, runMessages, runTrail, runWorkflow, set, type, workflowDescription } from './model';
+import { content, emptyReport, history, inputValues, runMessages, runTrail, runWorkflow, set, workflowDescription } from './model';
 import { When } from './When';
 import { Secrets } from './Secrets';
 import { Runs } from './Runs';
@@ -48,7 +48,7 @@ export function App() {
   const [error, setError] = useState('');
   const [pending, setPending] = useState([]);
   const [confirmation, setConfirmation] = useState(null);
-  const [naming, setNaming] = useState(false);
+  const [naming, setNaming] = useState(null);
   const [name, setName] = useState('');
   const latest = useRef({ workflow, opened }), saveButton = useRef(null), runButton = useRef(null), descriptionVisit = useRef({});
   latest.current = { workflow, opened, editing: screen === 'Canvas' && !runId };
@@ -100,14 +100,16 @@ export function App() {
   }, []);
   useReply(runId && screen === 'Canvas' && op['runs follow'], [runId], setRecord, setError);
   const write = name => perform(async () => {
-    const snapshot = workflow, basedOn = opened;
-    setNaming(false);
-    for await (const node of call(op.save, name, opened.version, snapshot)) {
-      if (latest.current.opened === basedOn) setOpened({ ...basedOn, name: node.name, version: node.version, workflow: snapshot });
-    }
+    const snapshot = naming?.workflow || workflow, basedOn = opened;
+    let saved;
+    for await (const node of call(op.save, name, naming ? '' : opened.version, snapshot)) saved = node;
     for await (const nodes of call(op.nodes)) setCatalog(nodes);
+    if (naming?.replace) await naming.replace(saved.name);
+    else if (latest.current.opened === basedOn) setOpened({ ...basedOn, name: saved.name, version: saved.version, workflow: snapshot });
+    setNaming(null);
   }, 'save');
-  const save = () => { if (!valid()) return; if (opened.name) write(opened.name); else { setName(''); setNaming(true); } };
+  const saveAs = (workflow, replace) => { if (!valid()) return; setName(''); setError(''); setNaming({ workflow, replace }); };
+  const save = () => { if (!valid()) return; if (opened.name) write(opened.name); else saveAs(workflow); };
   const run = () => perform(async () => {
     setRunError('');
     try {
@@ -179,7 +181,7 @@ export function App() {
       }}>{name}</button>)}</nav>
       <button className={'guide-toggle ' + (guide ? 'active' : 'quiet')} aria-expanded={!!guide} onClick={() => setGuide(!guide)}>Guide</button>
     </header>
-    {error && <div className="notice problem" role="alert">{error}<button className="quiet" onClick={() => setError('')} title="Close"><Icon name="close" />Close</button></div>}
+    {error && !naming && <div className="notice problem" role="alert">{error}<button className="quiet" onClick={() => setError('')} title="Close"><Icon name="close" />Close</button></div>}
     <div className="page-content">{screen === 'Canvas' ? <div className="workspace">
       <section className="work"><div className={'toolbar ' + (runId ? 'run-bar' : '')}>
         {runId ? <>
@@ -227,9 +229,9 @@ export function App() {
             const port = workflowDescription(report)?.inputs?.[name] || declaration;
             const fallback = typeof declaration === 'object' ? declaration.default : undefined;
             const required = values[name] === undefined && fallback === undefined;
-            return <div className="port" key={name}><label>{name}<small>{type(port)}</small></label>
+            return <div className="port" key={name}>
               {required && <small>Required</small>}
-              <Field port={port} value={values[name]} required={required} onChange={next => { setRunInputs(current => set(current, [name], next)); setRunError(''); }} catalog={catalog} references={false} />
+              <Field label={name} port={port} value={values[name]} required={required} onChange={next => { setRunInputs(current => set(current, [name], next)); setRunError(''); }} catalog={catalog} references={false} />
               {fallback !== undefined && <div className="input-default"><small>Default</small><Value value={fallback} port={port} /></div>}
               {messages.filter(message => message.input === name).map((message, i) => <p className="problem" key={i}>{message.message}</p>)}
             </div>;
@@ -241,14 +243,14 @@ export function App() {
         <Source source={shown?.source} showRun={showRun} fail={setError} />
         {runId && !record && !fromEditor ? <p className="loading">Opening run…</p> :
           <Canvas key={runId && (!fromEditor || runPath.length) ? runId + JSON.stringify(runPath) : opened.key} workflow={fromEditor && !runPath.length ? { ...viewed, view: workflow.view } : viewed} catalog={catalog}
-            onEdit={runId ? undefined : setWorkflow} record={shown} onFrom={!runPath.length && record?.workflow && record.finished && !pending.includes('from') ? from : undefined}
+            onEdit={runId ? undefined : setWorkflow} record={shown} trail={[opened.name || 'New workflow']} onFrom={!runPath.length && record?.workflow && record.finished && !pending.includes('from') ? from : undefined}
             onCall={record && (path => setRunPath([...runPath, ...path]))}
             onUse={!runPath.length && fromEditor && record?.finished ? useValue : undefined} pendingSource={!runId && pendingSource} onConnected={() => setPendingSource(null)}
-            onOpen={name => perform(() => open(name), 'open')} opening={pending.includes('open')} onCheck={setChecked} />}
+            onOpen={name => perform(() => open(name), 'open')} onSave={saveAs} opening={pending.includes('open')} onCheck={setChecked} />}
         {shown && <details className="report run-outputs" open><summary>Run outputs</summary><Value value={shown.outputs ?? undefined} port={{ fields: workflowDescription(report)?.outputs }} /></details>}
       </section>
     </div> : screen === 'Runs' ? <Runs showRun={showRun} fail={setError} trigger={runFilter} /> : screen === 'When' ?
-      <When catalog={catalog} perform={perform} pending={pending} ask={ask} fail={setError} showRun={showRun} showRuns={name => { setRunFilter(name); setScreen('Runs'); }} /> : screen === 'Secrets' ?
+      <When catalog={catalog} onSave={saveAs} perform={perform} pending={pending} ask={ask} fail={setError} showRun={showRun} showRuns={name => { setRunFilter(name); setScreen('Runs'); }} /> : screen === 'Secrets' ?
       <Secrets perform={perform} pending={pending} ask={ask} fail={setError} /> :
       <Plugins catalog={catalog} setCatalog={setCatalog} perform={perform} pending={pending} ask={ask} fail={setError} log={installLog} setLog={setInstallLog} changed={pluginChanges} setChanged={setPluginChanges} />}
     {guide && <Guide text={tutorial} onClose={() => setGuide(false)} />}</div>
@@ -258,9 +260,10 @@ export function App() {
         {error && <p className="notice problem">{error}</p>}
         <Canvas workflow={preview.workflow} catalog={catalog} record={preview} />
     </Dialog>}
-    {naming && <Dialog className="run-inputs" label="Save workflow" onClose={() => setNaming(false)}><form onSubmit={event => { event.preventDefault(); write(name); }}>
-      <h2>Save workflow</h2><label>Name<input aria-label="Workflow name" autoFocus required value={name} onChange={event => setName(event.target.value)} /></label>
-      <div className="row"><button type="button" onClick={() => setNaming(false)}>Cancel</button><button className="primary" type="submit">Save</button></div>
+    {naming && <Dialog className="run-inputs" label="Save workflow" onClose={() => { if (!pending.includes('save')) setNaming(null); }}><form onSubmit={event => { event.preventDefault(); write(name); }}>
+      <h2>Save workflow</h2><label>Name<input aria-label="Workflow name" autoFocus required disabled={pending.includes('save')} value={name} onChange={event => setName(event.target.value)} /></label>
+      {error && <p className="problem" role="alert">{error}</p>}
+      <div className="row"><button type="button" disabled={pending.includes('save')} onClick={() => setNaming(null)}>Cancel</button><button className="primary" type="submit" disabled={pending.includes('save')}>{pending.includes('save') ? 'Saving…' : 'Save'}</button></div>
     </form></Dialog>}
     {confirmation && <Dialog className="run-inputs" label={confirmation.title} onClose={() => setConfirmation(null)}>
       <h2>{confirmation.title}</h2><div>{confirmation.message}</div>

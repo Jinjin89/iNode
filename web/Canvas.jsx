@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Background, ControlButton, Controls, Handle, Position, ReactFlow, ReactFlowProvider, getNodesBounds, getViewportForBounds, useStore, useReactFlow, useUpdateNodeInternals } from '@xyflow/react';
-import { add, content, graph, handle, parseHandle, problems, rename, set, type, kind, box, inputs as nodeInputs, reference, connect, emptyReport, emptyValue, expose, move, groups, connectionProblem, unique, workflowDescription, nodeName, reveal, cardGeometry } from './model';
+import { Background, ControlButton, Controls, Handle, Position, ReactFlow, ReactFlowProvider, applyNodeChanges, getNodesBounds, getViewportForBounds, useStore, useReactFlow, useUpdateNodeInternals } from '@xyflow/react';
+import { add, content, graph, group, handle, parseHandle, problems, rename, set, type, kind, box, inputs as nodeInputs, reference, connect, emptyReport, emptyValue, expose, move, groups, connectionProblem, unique, workflowDescription, nodeName, reveal, cardGeometry } from './model';
 import { call, op } from './client';
 import { Duration, Value } from './Value';
 import { Icon } from './Icon';
@@ -22,10 +22,44 @@ export function useReply(operation, args, receive, fail, interval = 0) {
   }, [operation, ...args, receive, fail, interval]);
 }
 
+export function useProposal(workflow, onEdit, scope = '(inline)') {
+  const [notice, setNotice] = useState(null), latest = useRef({ workflow, onEdit }), connecting = useRef(0);
+  latest.current = { workflow, onEdit };
+  useEffect(() => () => { connecting.current++; }, []);
+  useEffect(() => { if (notice && !notice.checking) { const timer = setTimeout(() => setNotice(null), 6000); return () => clearTimeout(timer); } }, [notice]);
+  const propose = async build => {
+    const attempt = ++connecting.current, before = latest.current.workflow, next = build(before);
+    const show = (message, checking = false) => setNotice({ path: next.path && handle(next.socket || next.path), message, checking });
+    show('Checking change…', true);
+    try {
+      for await (const report of call(op.check, JSON.parse(content(next.workflow)))) {
+        if (attempt !== connecting.current) return;
+        if (content(before) !== content(latest.current.workflow)) { show('The workflow changed; try again.'); return; }
+        const problem = connectionProblem(report, next.path, scope);
+        if (problem) show(problem.message);
+        else { setNotice(null); latest.current.onEdit(current => ({ ...next.workflow, view: next.workflow.view === before.view ? current.view : next.workflow.view })); return true; }
+      }
+    } catch (error) { show(error.message); }
+  };
+  return [notice, propose];
+}
+
 export function Dialog({ label, onClose, className, children }) {
   const ref = useRef(null);
   useEffect(() => { const dialog = ref.current; dialog.showModal(); return () => dialog.close(); }, []);
-  return createPortal(<dialog ref={ref} className={className} aria-label={label} onCancel={event => { event.preventDefault(); onClose(); }}>{children}</dialog>, document.body);
+  return createPortal(<dialog ref={ref} className={'nokey ' + className} aria-label={label} onClick={event => event.stopPropagation()} onCancel={event => { event.preventDefault(); onClose(); }}>{children}</dialog>, document.body);
+}
+
+function InlineEditor({ workflow, onEdit, catalog, onOpen, onSave, onUse, trail = ['Workflow'], label, children }) {
+  const [opened, open] = useState(false);
+  return <><button type="button" className="open-box nodrag" onClick={() => open(true)}>Open · Steps: {Object.keys(workflow.steps || {}).length}</button>
+    {opened && <Dialog className="box-editor nodrag nopan nowheel" label="Inline workflow" onClose={() => open(false)}>
+      <div className="toolbar"><nav aria-label="Workflow path">{trail.join(' › ')} › <strong aria-current="page">{label}</strong></nav>
+        {onSave && <button type="button" onClick={() => onSave(workflow, async name => { const accepted = await onUse(name); open(false); return accepted; })}>Save as</button>}
+        <button type="button" title="Back (Escape)" onClick={() => open(false)}>Back</button></div>
+      {children}<Canvas workflow={workflow} catalog={catalog} onEdit={onEdit} onOpen={onOpen} onSave={onSave} trail={[...trail, label]} />
+    </Dialog>}
+  </>;
 }
 
 const nodeMime = 'application/x-inode-node';
@@ -58,14 +92,17 @@ export function NodeList({ catalog, onAdd, onOpen, opening }) {
   </aside>;
 }
 
-export function Field({ port = {}, value, onChange, catalog = [], path = [], socket, descriptions = {}, issues = [], references = true, onOpen, children, item = false, placeholder, required = false, closed = false }) {
+function FieldLabel({ label, port, actions }) {
+  return <div className="field-label nodrag" tabIndex={actions ? 0 : undefined}><span title={String(label)}>{label}</span><small>{type(port)}</small>{actions}</div>;
+}
+
+export function Field({ label, port = {}, value, onChange, catalog = [], path = [], socket, descriptions = {}, issues = [], references = true, onOpen, onSave, propose, trail, children, item = false, placeholder, required = false, closed = false }) {
   const shape = kind(port);
   const json = !['text', 'secret', 'number', 'bool', 'node'].includes(shape);
   const fallback = port?.default;
   const shownValue = value === undefined ? fallback : value;
   const [draft, setDraft] = useState('');
   const [error, setError] = useState('');
-  const [opened, open] = useState(false);
   const [editing, setEditing] = useState(false);
   const [secrets, setSecrets] = useState([]);
   const control = useRef(null);
@@ -89,23 +126,24 @@ export function Field({ port = {}, value, onChange, catalog = [], path = [], soc
       <button type="button" className="quiet" onClick={() => onChange(emptyValue(port))}>Use empty {shape}</button>}
     {clear}
   </div>;
+  const tools = label === undefined && actions;
+  const frame = field => label === undefined ? field : <div className="field-entry"><FieldLabel label={label} port={port} actions={actions} />{field}</div>;
   const handle = socket?.(path, port, closed || !onChange || !structured && !box(port));
   if (closed) return <div className={'field summary nodrag' + (references && reference(shownValue) ? ' linked' : '')} {...drop}>
     {handle}<Value value={onChange ? shown : value} port={port} compact />
   </div>;
-  if (references && reference(shownValue)) return <div className={'field linked ' + (box(port) ? 'box' : '')} {...drop}>{handle}<code>{shownValue}</code>{actions}</div>;
+  if (references && reference(shownValue)) return frame(<div className={'field linked ' + (box(port) ? 'box' : '')} {...drop}>{handle}<code>{shownValue}</code>{tools}</div>);
   const child = (path, item, data, change, childSocket, props = {}) => <Field port={item} value={data} onChange={change} catalog={catalog}
-    path={path} socket={childSocket} descriptions={descriptions} references={references} onOpen={onOpen} {...props} />;
+    path={path} socket={childSocket} descriptions={descriptions} references={references} onOpen={onOpen} onSave={onSave} propose={propose} trail={trail} {...props} />;
   if (box(port)) {
     const asStep = value => typeof value === 'string' ? { use: value } : value;
     const step = asStep(shownValue);
     const inline = step?.use && typeof step.use === 'object';
     const edit = (next, group) => onChange(current => set(asStep(current ?? shownValue), ['use'], next), group);
     const fields = childSocket => Object.entries({ ...nodeInputs(step.use, step.in, catalog), ...descriptions[JSON.stringify(path)]?.inputs }).map(([name, port]) => <div className="port" key={name}>
-      <label>{name}<small>{type(port)}</small></label>
-      {child([...path, 'in', name], port, step.in?.[name], (next, group) => onChange(current => set(asStep(current ?? shownValue), ['in', name], next), group), childSocket, { placeholder: 'Given when the box is called' })}
+      {child([...path, 'in', name], port, step.in?.[name], (next, group) => onChange(current => set(asStep(current ?? shownValue), ['in', name], next), group), childSocket, { label: name, placeholder: 'Given when the box is called' })}
     </div>);
-    return <div className="box nodrag nowheel" {...drop}>
+    return frame(<div className="box nodrag nowheel" {...drop}>
       {handle}<div className="box-title">Box</div>
       <select aria-label="Node in box" required={required} value={inline ? 'inline' : step?.use ? 'node:' + step.use : ''} onChange={event => onChange({
         use: event.target.value === 'inline' ? { inputs: {}, steps: {}, outputs: {} } : event.target.value.slice(5),
@@ -113,33 +151,29 @@ export function Field({ port = {}, value, onChange, catalog = [], path = [], soc
         <option value="" disabled>{placeholder || 'Choose a node'}</option><option value="inline">Inline workflow</option>{catalog.map(node => <option key={node.name} value={'node:' + node.name}>{node.name}</option>)}
       </select>
       {step?.use && <div className="box-inputs">{fields(socket)}</div>}
-      {inline && <button type="button" className="open-box" onClick={() => open(true)}>Open box · Steps: {Object.keys(step.use.steps || {}).length}</button>}
-      {inline && opened && <Dialog className="box-editor nodrag nopan nowheel" label="Box editor" onClose={() => open(false)}>
-          <div className="toolbar"><strong>Box</strong><span>Steps: {Object.keys(step.use.steps || {}).length}</span><button type="button" title="Back (Escape)" onClick={() => open(false)}>Back</button></div>
+      {inline && <InlineEditor workflow={step.use} catalog={catalog} onEdit={edit} onOpen={onOpen} onSave={onSave} onUse={name => propose(current => ({ workflow: set(current, [...path, 'use'], name) }))} trail={trail} label={[path[1], path.at(-1)].filter(Boolean).join(' · ') || 'Box'}>
           {issues.length > 0 && <div className="report"><Messages items={issues} /></div>}
           {Object.keys(step.use.inputs || {}).length > 0 && <details className="box-captures"><summary>Box inputs</summary>{fields()}</details>}
-          <Canvas workflow={step.use} catalog={catalog} onEdit={edit} onOpen={onOpen} />
-      </Dialog>}
-      {actions}
+      </InlineEditor>}
+      {tools}
       {error && <p className="problem">{error}</p>}
-    </div>;
+    </div>);
   }
   if (structured) {
     const list = shape === 'list';
     const values = shownValue || (list ? [] : {});
     const entries = list ? values.map((_, i) => [i, port.item]) : Object.entries(port.fields);
-    return <div className="field-fields nodrag nowheel">{handle}
+    return frame(<div className="field-fields nodrag nowheel">{handle}
       {shownValue === undefined && placeholder && <small>{placeholder}</small>}
       {entries.map(([name, item]) => <div className={'field-row ' + (list ? 'list-item' : '')} key={name}>
-      {!list && <label>{name}<small>{type(item)}</small></label>}
-      {child([...path, String(name)], item, values[name], (next, group) => onChange(current => set(current ?? values, [name], next), group), socket, { item: list, children: list && <>
+      {child([...path, String(name)], item, values[name], (next, group) => onChange(current => set(current ?? values, [name], next), group), socket, { label: list ? undefined : name, item: list, children: list && <>
         <button type="button" aria-label="Move item up" title="Move item up" disabled={name === 0} onClick={() => onChange(current => move(current ?? values, name, name - 1))}><Icon name="up" /></button>
         <button type="button" aria-label="Move item down" title="Move item down" disabled={name === values.length - 1} onClick={() => onChange(current => move(current ?? values, name, name + 1))}><Icon name="down" /></button>
       </> })}
     </div>)}
       {list && <button type="button" className="quiet" onClick={() => onChange(current => [...(current ?? values), emptyValue(port.item)])} title="Add item"><Icon name="add" />Add item</button>}
-      {actions}
-    </div>;
+      {tools}
+    </div>);
   }
   const read = text => json ? text === '' ? undefined : JSON.parse(text) : shape === 'number' ? text === '' ? undefined : Number(text)
     : references && text.startsWith('=') ? '=' + text : text;
@@ -166,7 +200,7 @@ export function Field({ port = {}, value, onChange, catalog = [], path = [], soc
       if (!json && event.key === 'Enter') event.currentTarget.blur();
     },
   };
-  return <div className="field nodrag">{handle}
+  return frame(<div className="field nodrag">{handle}
     {shape === 'secret' ? <select aria-label="Secret name" required={required} value={shown ?? ''} onChange={event => onChange(references && event.target.value.startsWith('=') ? '=' + event.target.value : event.target.value)}>
       <option value="" disabled>{placeholder || 'Choose a secret'}</option>
       {[...new Set([...(shown ? [shown] : []), ...secrets])].map(name => <option key={name}>{name}</option>)}
@@ -176,8 +210,8 @@ export function Field({ port = {}, value, onChange, catalog = [], path = [], soc
       <input {...entry} aria-label={shape + ' value'} type={shape === 'number' ? 'number' : 'text'} step={shape === 'number' ? 'any' : undefined}
         placeholder={fallback === undefined ? placeholder || 'Not filled' : String(fallback)} />}
     {value === undefined && fallback !== undefined && <small>Default</small>}
-    {actions}{error && <p className="problem">{error}</p>}
-  </div>;
+    {tools}{error && <p className="problem">{error}</p>}
+  </div>);
 }
 
 export function Messages({ items }) {
@@ -185,16 +219,18 @@ export function Messages({ items }) {
 }
 
 function Step({ id, data, width, height }) {
-  const { kind, name, step, info, ports, inputs, outputs, record, workflow, catalog, edit, report, scope, onOpen, notice, propose, pendingSource, wire, open, active, focus, choose, remove, ensureVisible, fresh } = data;
+  const { kind, name, step, info, ports, inputs, outputs, record, workflow, catalog, edit, report, scope, onOpen, onSave, trail, notice, propose, pendingSource, wire, open, active, focus, choose, remove, ensureVisible, fresh } = data;
   const card = useRef(null), update = useUpdateNodeInternals();
   useEffect(() => { update(id); }, [id, workflow, record, report, open, update]);
   useLayoutEffect(() => { if (active) ensureVisible(card.current.querySelector(':focus') || card.current); }, [active, width, height, ensureVisible]);
   useEffect(() => {
-    if (!open) return;
-    const control = focus && card.current.querySelector('[data-port=' + JSON.stringify(handle(focus)) + ']')?.querySelector('input, textarea, select, button');
+    if (!open || !fresh) return;
+    const slot = focus && focus !== 'name' && card.current.querySelector('[data-port=' + JSON.stringify(handle(focus)) + ']');
+    const control = focus === 'name' ? card.current.querySelector('[aria-label="Step name"]') : slot?.querySelector('input, textarea, select') || slot?.querySelector('.field-label, button');
     (control || card.current).focus({ preventScroll: true });
+    if (focus === 'name') control?.select();
     ensureVisible(control || card.current);
-  }, [open, focus, ensureVisible]);
+  }, [open, focus, ensureVisible, fresh]);
   const where = kind === 'step' ? scope + '/' + name : scope;
   const at = input => edit ? problems(report, where, input) : [];
   const message = path => notice?.path === handle(path) && <span className="socket-message" role="alert">{notice.message}</span>;
@@ -206,9 +242,9 @@ function Step({ id, data, width, height }) {
     {message(path)}
   </>;
   const source = (path, port) => <><Handle type="source" position={Position.Right} data-type={port?.kind} id={handle(path)} title={edit ? 'Connect this output to an input' : undefined} isConnectable={!!edit && !notice?.checking && !pendingSource} />{message(path)}</>;
-  const field = (port, value, path, children) => <div className="field-slot" data-port={handle(path)}><Field closed={!open} references={!record} port={port} value={value} onChange={edit && ((next, group) => edit(current => set(current, path, next), group))} catalog={catalog} path={path} socket={target} descriptions={report.nodes} onOpen={onOpen}
+  const field = (port, value, path, children) => <div className="field-slot" data-port={handle(path)}><Field label={kind === 'step' ? path[3] : 'Value'} closed={!open} references={!record} port={port} value={value} onChange={edit && ((next, group) => edit(current => set(current, path, next), group))} catalog={catalog} path={path} socket={target} descriptions={report.nodes} onOpen={onOpen} onSave={onSave} propose={propose} trail={trail}
     issues={at(path.slice(kind === 'step' ? 3 : 0).join('.'))} children={children} /></div>;
-  const click = path => event => { if (edit && !open && !event.target.closest('.react-flow__handle')) { event.stopPropagation(); choose({ id, field: path }); } };
+  const click = path => event => { if (edit && !open && !event.shiftKey && !event.target.closest('.react-flow__handle')) { event.stopPropagation(); choose({ ids: [id], field: path }); } };
   const issues = kind === 'step' ? at() : Object.keys(ports).flatMap(key => at(kind === 'inputs' ? key : 'outputs.' + key));
   const ordered = step?.after?.length || Object.values(workflow.steps || {}).some(other => other.after?.includes(name));
   const title = kind === 'step' ? name : kind === 'inputs' ? 'Inputs' : 'Outputs';
@@ -216,7 +252,7 @@ function Step({ id, data, width, height }) {
   return <article ref={card} tabIndex={-1} title={problem || undefined} data-after={!!ordered} data-state={record?.state} className={'step ' + (open ? 'open ' : 'closed ') + (kind === 'step' ? record?.state || '' : '') + (issues.length ? ' has-problem' : '')}>
     <header>{open && kind === 'step' ? <>
       <Named label="Step name" name={name} names={Object.keys(workflow.steps)} onChange={edit && fresh && (next => {
-        if (next !== name && choose({ id: handle(['steps', next]) })) edit(current => rename(current, 'steps', name, next, report));
+        if (next !== name && choose({ ids: [handle(['steps', next])] })) edit(current => rename(current, 'steps', name, next, report));
       })} /><button className="quiet nodrag" aria-label="Delete step" title="Delete step (Delete / Backspace)" onClick={remove}><Icon name="delete" /></button>
     </> : <strong title={problem || title}>{title}</strong>}{kind === 'step' && record && <span className="step-status"><span className={'state ' + record.state}>{record.state}</span><Duration record={record} /></span>}</header>
     <div className="step-body">
@@ -224,24 +260,25 @@ function Step({ id, data, width, height }) {
       <div className="node-name"><span title={nodeName(step.use)}>{nodeName(step.use)}</span><span className="after-source" title={edit ? 'Connect to after' : undefined}>{source([name])}</span>
         <span className="after-target" title={edit ? 'Run after another step' : undefined}>{target(['steps', name, 'after'])}</span></div>
       {open && <p className="node-doc">{info.doc}</p>}
+      {open && typeof step.use === 'object' && <InlineEditor workflow={step.use} onEdit={(next, group) => edit(current => set(current, ['steps', name, 'use'], next), group)} catalog={catalog} onOpen={onOpen} onSave={onSave} onUse={next => propose(current => ({ workflow: set(current, ['steps', name, 'use'], next) }))} trail={trail} label={name} />}
       {Object.entries(inputs).map(([key, port]) => <div className={'port ' + (at(key).length ? 'has-problem' : '')} key={key} title={at(key).map(problem => problem.message).join('\n') || type(port)} onClickCapture={click(['steps', name, 'in', key])}>
-        <label>{key}{open && <small>{type(port)}</small>}{!open && at(key).length > 0 && <span className="problem-mark">!</span>}</label>
+        {!open && <label>{key}{at(key).length > 0 && <span className="problem-mark">!</span>}</label>}
         {field(port, record ? record.inputs?.[key] : step.in?.[key], ['steps', name, 'in', key], edit && open && <button className="quiet expose" disabled={notice?.checking} onClick={() => propose(current => ({ workflow: expose(current, 'inputs', name, key, port), path: ['steps', name, 'in', key] }))}>Ask for this when run</button>)}
         {open && <Messages items={at(key)} />}
       </div>)}
       {open && <Messages items={at('after')} />}
-      <div className="outputs">{Object.entries(outputs).map(([key, port]) => <div className="port output" key={key} onClickCapture={click(['outputs', key])}>
-        <span>{key}{open && <small>{type(port)}</small>}</span>{source([name, key], port)}
-        <div className="field-slot" data-port={handle(['outputs', key])}>{open && edit ? <div className="field-actions"><button className="quiet expose" disabled={notice?.checking} onClick={() => propose(current => ({ workflow: expose(current, 'outputs', name, key), path: ['outputs', unique(current.outputs, key)], socket: [name, key] }))}>Give this back</button></div> : <Value value={record?.outputs?.[key]} port={port} compact />}</div>
+      <div className="outputs">{Object.entries(outputs).map(([key, port]) => <div className="port output field-entry" key={key} data-port={handle(['outputs', key])} onClickCapture={click(['outputs', key])}>
+        {open ? <FieldLabel label={key} port={port} actions={edit && <div className="field-actions"><button className="quiet expose" disabled={notice?.checking} onClick={() => propose(current => ({ workflow: expose(current, 'outputs', name, key), path: ['outputs', unique(current.outputs, key)], socket: [name, key] }))}>Give this back</button></div>} /> : <span>{key}</span>}{source([name, key], port)}
+        <div className="field-slot">{!open && <Value value={record?.outputs?.[key]} port={port} compact />}</div>
       </div>)}</div>
     </> : <div className={kind === 'outputs' ? 'outputs' : undefined}>{Object.entries(ports).map(([key, port]) => <div className={'port ' + (kind === 'inputs' ? 'output' : '')} key={key} title={kind === 'inputs' && record?.source?.inputs[key] ? 'Copied from =' + record.source.inputs[key].join('.') : undefined} data-type={kind === 'outputs' ? workflowDescription(report)?.outputs?.[key]?.kind : undefined} onClickCapture={click(kind === 'inputs' ? ['inputs', key, 'default'] : ['outputs', key])}>
       {open ? <>
-        <div className="row"><Named name={key} names={Object.keys(workflow[kind])} onChange={fresh && (next => { if (next !== key && choose({ id })) edit(current => rename(current, kind, key, next, report)); })} />
+        <div className="row"><Named name={key} names={Object.keys(workflow[kind])} onChange={fresh && (next => { if (next !== key && choose({ ids: [id] })) edit(current => rename(current, kind, key, next, report)); })} />
           <button className="nodrag" aria-label="Delete" title="Delete" onClick={() => edit(current => set(current, [kind, key], undefined))}><Icon name="delete" /></button></div>
         {kind === 'inputs' && <label>Type<Named label="Input type" name={type(port)} onChange={next => edit(current => set(current, ['inputs', key], declaration => typeof declaration === 'object' ? { ...declaration, type: next } : next))} /></label>}
       </> : <span>{key}</span>}
       {kind === 'inputs' ? <>{source(['inputs', key], port)}<div className="field-slot" data-port={handle(['inputs', key, 'default'])}>
-        {open && <label>Default</label>}<Field closed={!open} port={port} value={record ? record.inputs?.[key] : workflow.inputs?.[key]?.default} onChange={edit && ((next, group) => edit(current => set(current, ['inputs', key], declaration => next === undefined ? { type: type(declaration) } : { type: type(declaration), default: set(declaration?.default, [], next) }), group))} catalog={catalog} references={false} />
+        <Field label="Default" closed={!open} port={port} value={record ? record.inputs?.[key] : workflow.inputs?.[key]?.default} onChange={edit && ((next, group) => edit(current => set(current, ['inputs', key], declaration => next === undefined ? { type: type(declaration) } : { type: type(declaration), default: set(declaration?.default, [], next) }), group))} catalog={catalog} references={false} />
       </div></> : record ? <>{target(['outputs', key])}<Value value={record.outputs?.[key]} port={workflowDescription(report)?.outputs?.[key]} compact /></> : field('any', port, ['outputs', key])}
       {open && <Messages items={at(kind === 'inputs' ? key : 'outputs.' + key)} />}
     </div>)}{open && <button className="add-port nodrag" onClick={() => edit(current => set(current, [kind, unique(current[kind], 'value')], kind === 'inputs' ? 'text' : ''))}><Icon name="add" />Add {kind === 'inputs' ? 'input' : 'output'}</button>}</div>}
@@ -282,15 +319,15 @@ export function Canvas(props) {
   return <ReactFlowProvider><CanvasView {...props} /></ReactFlowProvider>;
 }
 
-function CanvasView({ workflow, catalog, onEdit, record, onFrom, onCall, onOpen, opening, onCheck, onUse, pendingSource, onConnected, scope = '(inline)' }) {
-  const [selected, select] = useState({});
+function CanvasView({ workflow, catalog, onEdit, record, onFrom, onCall, onOpen, onSave, opening, onCheck, onUse, pendingSource, onConnected, scope = '(inline)', trail = ['Workflow'] }) {
+  const [selected, select] = useState({ ids: [] });
+  const selecting = useStore(state => state.userSelectionActive);
+  const selectedId = !selecting && selected.ids.length === 1 ? selected.ids[0] : undefined;
   const [fitRequest, requestFit] = useState(0);
-  const [notice, setNotice] = useState(null);
-  const canvas = useRef(null), frame = useRef(null), drag = useRef({}), latest = useRef({ workflow, onEdit }), connecting = useRef(0);
+  const [notice, propose] = useProposal(workflow, onEdit, scope);
+  const canvas = useRef(null), frame = useRef(null), drag = useRef({}), latest = useRef({ workflow, onEdit });
   latest.current = { workflow, onEdit };
   const flow = useReactFlow();
-  useEffect(() => () => { connecting.current++; }, []);
-  useEffect(() => { if (notice && !notice.checking) { const timer = setTimeout(() => setNotice(null), 6000); return () => clearTimeout(timer); } }, [notice]);
   const [checked, setChecked] = useState({ document: null, report: emptyReport });
   const [error, setError] = useState('');
   const key = content(workflow);
@@ -315,7 +352,7 @@ function CanvasView({ workflow, catalog, onEdit, record, onFrom, onCall, onOpen,
     document.activeElement?.blur();
     const invalid = canvas.current.querySelector('.step.open :invalid');
     if (invalid) { invalid.reportValidity(); return false; }
-    select(choice); return true;
+    select({ ids: [], ...choice }); return true;
   };
   useLayoutEffect(() => {
     const box = canvas.current.querySelector('.drawing').getBoundingClientRect(), view = flow.getViewport();
@@ -325,24 +362,25 @@ function CanvasView({ workflow, catalog, onEdit, record, onFrom, onCall, onOpen,
     }
     frame.current = box;
   });
-  useEffect(() => { select({}); }, [record?.id]);
+  useEffect(() => { select({ ids: [] }); }, [record?.id]);
   const failed = Object.keys(records).find(name => records[name].state === 'failed');
   useEffect(() => {
-    if (failed) select({ id: handle(['steps', failed]) });
+    if (failed) select({ ids: [handle(['steps', failed])] });
   }, [failed, record?.state]);
-  const selection = selected.id ? parseHandle(selected.id) : [];
+  const selection = selectedId ? parseHandle(selectedId) : [];
+  const names = selected.ids.map(parseHandle).filter(path => path[0] === 'steps' && path.length === 2 && workflow.steps?.[path[1]]).map(path => path[1]);
   const name = selection[0] === 'steps' && selection.length === 2 ? selection[1] : '';
   const step = workflow.steps?.[name];
   const child = records[name];
   const boundary = selection.length === 1 ? selection[0] : '';
-  const remove = () => { onEdit(current => set(current, selection, undefined)); select({}); };
+  const remove = () => { onEdit(current => selected.ids.map(parseHandle).filter(path => path.length > 1).reduce((next, path) => set(next, path, undefined), current)); select({ ids: [] }); };
   useEffect(() => {
     const key = event => {
       if (event.defaultPrevented || event.target.closest('dialog') !== canvas.current.closest('dialog')) return;
       if (event.key === 'Escape' && pendingSource) { onConnected(); event.preventDefault(); return; }
-      if (event.key === 'Escape' && selected.id) { choose({}); event.preventDefault(); }
+      if (event.key === 'Escape' && selected.ids.length) { choose({}); event.preventDefault(); }
       if (onEdit && !event.target.closest('input, textarea, select, [contenteditable]') && ['Delete', 'Backspace'].includes(event.key)
-        && (step || derived.edges.some(edge => edge.id === selected.id))) { event.preventDefault(); remove(); }
+        && (names.length || derived.edges.some(edge => edge.id === selectedId))) { event.preventDefault(); remove(); }
     };
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
@@ -350,41 +388,35 @@ function CanvasView({ workflow, catalog, onEdit, record, onFrom, onCall, onOpen,
   const addStep = (use, position) => {
     const next = add(workflow, use, position);
     const name = Object.keys(next.steps).find(name => !workflow.steps?.[name]);
-    if (!choose({ id: handle(['steps', name]) })) return;
+    if (!choose({ ids: [handle(['steps', name])] })) return;
     onEdit(current => add(current, use, position));
     const node = graph(next, catalog, record, report, scope, width).nodes.find(node => node.id === handle(['steps', name]));
     if (!position) flow.setCenter(node.position.x + node.measured.width / 2, node.position.y + node.measured.height / 2, { zoom: Math.min(flow.getZoom(), 1) });
   };
-  const propose = async build => {
-    const attempt = ++connecting.current, before = latest.current.workflow, next = build(before);
-    const show = (message, checking = false) => setNotice({ path: handle(next.socket || next.path), message, checking });
-    show('Checking connection…', true);
-    try {
-      for await (const report of call(op.check, JSON.parse(content(next.workflow)))) {
-        if (attempt !== connecting.current) return;
-        if (content(before) !== content(latest.current.workflow)) { show('The workflow changed; connect again.'); return; }
-        const problem = connectionProblem(report, next.path, scope);
-        if (problem) show(problem.message);
-        else { setNotice(null); latest.current.onEdit(current => ({ ...next.workflow, view: current.view })); return true; }
-      }
-    } catch (error) { show(error.message); }
-  };
   const wire = (source, target) => propose(current => ({ workflow: connect(current, source, target), path: target })).then(accepted => { if (accepted) onConnected?.(); });
+  const makeNode = () => {
+    if (!choose({ ids: selected.ids })) return;
+    const next = group(latest.current.workflow, names, report);
+    propose(() => next).then(accepted => { if (accepted) choose({ ids: [handle(['steps', next.name])], field: 'name' }); });
+  };
   const nodes = derived.nodes.map(node => ({ ...node, measured: sizes[node.id] || node.measured,
-    style: { ...node.style, ...(onEdit && node.id === selected.id ? { width: cardGeometry.open, height: 'auto' } : {}) }, selected: node.id === selected.id, data: { ...node.data, workflow, catalog, edit: onEdit, report, scope, onOpen, notice, propose, pendingSource, wire, fresh,
-    active: node.id === selected.id, open: !!onEdit && node.id === selected.id, focus: selected.field, choose, remove, ensureVisible } }));
+    style: { ...node.style, ...(onEdit && node.id === selectedId ? { width: cardGeometry.open, height: 'auto' } : {}) }, selected: selected.ids.includes(node.id), data: { ...node.data, workflow, catalog, edit: onEdit, report, scope, onOpen, onSave, trail, notice, propose, pendingSource, wire, fresh,
+    active: node.id === selectedId, open: !!onEdit && node.id === selectedId, focus: selected.field, choose, remove, ensureVisible } }));
   return <div className="canvas-layout" ref={canvas} style={cardStyle} data-editable={onEdit ? '' : undefined}>
     {onOpen && <NodeList catalog={catalog} onAdd={onEdit && addStep} onOpen={onOpen} opening={opening} />}
     <div className="canvas-main">
     {!record && error && <p className="notice problem">{error}</p>}
+    {notice && !notice.path && <p className="notice problem" role="alert">{notice.message}</p>}
     {pendingSource && <div className="notice use-value">Use <code>={pendingSource.join('.')}</code> · Choose an input to connect.<button onClick={onConnected}>Cancel (Escape)</button></div>}
     <div className="canvas">
       <div className="drawing" onDragOver={event => { if (onEdit && event.dataTransfer.types.includes(nodeMime)) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; } }}
         onDrop={event => { const name = event.dataTransfer.getData(nodeMime); if (onEdit && name) { event.preventDefault(); addStep(name, flow.screenToFlowPosition({ x: event.clientX, y: event.clientY })); } }}>
-        <ReactFlow id={id} nodes={nodes} edges={derived.edges.map(edge => ({ ...edge, selected: edge.id === selected.id }))} nodeTypes={nodeTypes} minZoom={minZoom} maxZoom={1.5}
-          nodesDraggable={!!onEdit} nodesConnectable={!!onEdit} deleteKeyCode={null} connectOnClick onNodeDragStart={() => { drag.current = {}; }}
-          onNodeClick={(event, node) => { if (node.id !== selected.id && !event.target.closest('.react-flow__handle')) choose({ id: node.id }); }} onPaneClick={() => choose({})}
+        <ReactFlow id={id} nodes={nodes} edges={derived.edges.map(edge => ({ ...edge, selected: edge.id === selectedId }))} nodeTypes={nodeTypes} minZoom={minZoom} maxZoom={1.5}
+          nodesDraggable={!!onEdit && !notice?.checking} nodesConnectable={!!onEdit} deleteKeyCode={null} connectOnClick multiSelectionKeyCode="Shift" selectionKeyCode="Shift"
+          onNodeDragStart={() => { drag.current = {}; }} onSelectionDragStart={() => { drag.current = {}; }}
+          onNodeClick={(event, node) => { if (!event.shiftKey && node.id !== selectedId && !event.target.closest('.react-flow__handle')) choose({ ids: [node.id] }); }} onPaneClick={() => choose({})}
           onNodesChange={changes => {
+            if (changes.some(change => change.type === 'select')) choose({ ids: applyNodeChanges(changes, nodes).filter(node => node.selected).map(node => node.id) });
             latest.current.onEdit?.(current => {
               let next = current;
               for (const change of changes) if (change.type === 'position' && change.position) next = set(next, ['view', 'positions', change.id], change.position);
@@ -392,25 +424,26 @@ function CanvasView({ workflow, catalog, onEdit, record, onFrom, onCall, onOpen,
             }, drag.current);
           }}
           onConnect={edge => wire(parseHandle(edge.sourceHandle), parseHandle(edge.targetHandle))}
-          onEdgeClick={(_, edge) => { if (onEdit) choose({ id: edge.id }); }}>
+          onEdgeClick={(_, edge) => { if (onEdit) choose({ ids: [edge.id] }); }}>
           <Fit key={fitRequest + ':' + !!Object.keys(workflow.steps || {}).length} ready={fitRequest > 0 || fresh || !!error} nodes={derived.nodes} width={width} height={height} /><Background gap={22} size={1} />
           <Controls orientation="horizontal" showInteractive={false} showFitView={false}>
             <ControlButton className="react-flow__controls-fitview layout" title="Fit View" aria-label="Fit View" onClick={() => requestFit(value => value + 1)}>Fit</ControlButton>
             {onEdit && <ControlButton className="layout" title="Tidy layout" disabled={!Object.keys(workflow.view?.positions || {}).length} onClick={() => { if (!choose({})) return; onEdit(current => set(current, ['view', 'positions'], undefined)); requestFit(value => value + 1); }}>Tidy</ControlButton>}
-            {onEdit && derived.edges.some(edge => edge.id === selected.id) && <ControlButton aria-label="Delete connection" title="Delete connection (Delete / Backspace)" onClick={remove}><Icon name="delete" /></ControlButton>}
+            {onEdit && names.length > 1 && <ControlButton className="layout" disabled={!fresh || notice?.checking} onClick={makeNode}>Make a node</ControlButton>}
+            {onEdit && derived.edges.some(edge => edge.id === selectedId) && <ControlButton aria-label="Delete connection" title="Delete connection (Delete / Backspace)" onClick={remove}><Icon name="delete" /></ControlButton>}
           </Controls>
         </ReactFlow>
         {onEdit && !Object.keys(workflow.steps || {}).length && <div className="empty-canvas">Click a node on the left or drag it onto the canvas to add a step.</div>}
       </div>
-      {record && selected.id && (step || boundary) && <aside className="inspector nowheel">
-        <button className="quiet close" title="Close (Escape)" onClick={() => select({})}><Icon name="close" />Close</button>
+      {record && selectedId && (step || boundary) && <aside className="inspector nowheel">
+        <button className="quiet close" title="Close (Escape)" onClick={() => select({ ids: [] })}><Icon name="close" />Close</button>
         {step ? <>
           <h3>{name}</h3><p className="inspector-node">{nodeName(step.use)}</p>
           {onFrom && <button onClick={() => onFrom(name)}>Run from here</button>}
           {child && <>
             <p><span className={'state ' + child.state}>{child.state}</span> <Duration record={child} /></p>{child.error && <p className="problem">{child.error}</p>}
-            <h4>Received</h4><Value value={child.inputs ?? undefined} port={{ fields: derived.nodes.find(node => node.id === selected.id)?.data.inputs }} />
-            <h4>Returned</h4><Value value={child.outputs ?? undefined} port={{ fields: derived.nodes.find(node => node.id === selected.id)?.data.outputs }} path={[name]} onUse={onUse} />
+            <h4>Received</h4><Value value={child.inputs ?? undefined} port={{ fields: derived.nodes.find(node => node.id === selectedId)?.data.inputs }} />
+            <h4>Returned</h4><Value value={child.outputs ?? undefined} port={{ fields: derived.nodes.find(node => node.id === selectedId)?.data.outputs }} path={[name]} onUse={onUse} />
             {onCall && Object.entries(child.steps || {}).map(([key, call]) => <button className="call" key={key} onClick={() => onCall([...(record.workflow ? [name] : []), key])}>
               Call {key} · {call.node} · <span className={'state ' + call.state}>{call.state}</span> · <Duration record={call} />
             </button>)}

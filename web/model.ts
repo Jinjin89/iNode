@@ -124,6 +124,49 @@ export function expose(workflow: Workflow, boundary: 'inputs' | 'outputs', step:
   return connect(next, input ? ['inputs', name] : [step, port], input ? ['steps', step, 'in', port] : ['outputs', name]);
 }
 
+export function group(workflow: Workflow, names: string[], report: Report): { workflow: Workflow; name: string } {
+  const name = unique(workflow.steps, 'node');
+  let inner: Workflow = { inputs: {}, steps: Object.fromEntries(names.map(id => [id, workflow.steps![id]])), outputs: {} };
+  let next = workflow;
+  let supplied: Values = {};
+  const incoming = new Map<string, string>(), outgoing = new Map<string, string>();
+  for (const ref of report.references) {
+    const inside = ref.path[0] === 'steps' && names.includes(String(ref.path[1]));
+    if (inside === names.includes(ref.from[0])) continue;
+    const from = ref.from.slice(0, 2), key = handle(from), ports = inside ? 'inputs' : 'outputs', shared = inside ? incoming : outgoing;
+    let port = shared.get(key);
+    if (!port) {
+      port = unique(inner[ports], from[1]); shared.set(key, port);
+      if (inside) {
+        const source = from[0] === 'inputs' ? workflowDescription(report)?.inputs || workflow.inputs : report.nodes[JSON.stringify(['steps', from[0]])]?.outputs;
+        inner = set(inner, ['inputs', port], type(source?.[from[1]]));
+        supplied = set(supplied, [port], '=' + from.join('.'));
+      } else inner = set(inner, ['outputs', port], '=' + from.join('.'));
+    }
+    const value = '=' + [inside ? 'inputs' : name, port, ...ref.from.slice(2)].join('.');
+    if (inside) inner = set(inner, ref.path, value);
+    else next = set(next, ref.path, value);
+  }
+  const after = [...new Set(names.flatMap(id => workflow.steps![id].after || []).filter(id => !names.includes(id)))];
+  for (const [id, step] of Object.entries(workflow.steps || {})) {
+    if (names.includes(id)) {
+      if (step.after) inner = set(inner, ['steps', id, 'after'], step.after.filter(id => names.includes(id)));
+      next = set(next, ['steps', id], undefined);
+      next = set(next, ['view', 'positions', handle(['steps', id])], undefined);
+    } else if (step.after) next = set(next, ['steps', id, 'after'], [...new Set(step.after.map(id => names.includes(id) ? name : id))]);
+  }
+  const nodes = graph(workflow, [], undefined, report).nodes.filter(node => parseHandle(node.id)[0] === 'steps' && names.includes(String(parseHandle(node.id)[1])));
+  const left = Math.min(...nodes.map(node => node.position.x)), top = Math.min(...nodes.map(node => node.position.y));
+  for (const node of nodes) inner = set(inner, ['view', 'positions', node.id], { x: node.position.x - left, y: node.position.y - top });
+  next = set(next, ['steps', name], { use: inner, in: supplied, ...(after.length ? { after } : {}) });
+  const size = graph({ steps: { [name]: next.steps![name] } }, []).nodes[1].measured;
+  next = set(next, ['view', 'positions', handle(['steps', name])], {
+    x: (left + Math.max(...nodes.map(node => node.position.x + node.measured.width)) - size.width) / 2,
+    y: (top + Math.max(...nodes.map(node => node.position.y + node.measured.height)) - size.height) / 2,
+  });
+  return { workflow: next, name };
+}
+
 export function move(values: any[], from: number, to: number): any[] {
   const next = [...values];
   next.splice(to, 0, next.splice(from, 1)[0]);
@@ -152,7 +195,8 @@ export function history(state: History, action: { type: 'edit' | 'undo' | 'redo'
   return { present: from.at(-1)!, past: undo ? from.slice(0, -1) : [...to, state.present], future: undo ? [...to, state.present] : from.slice(0, -1) };
 }
 
-export function connectionProblem(report: Report, path: Path, scope: string): Problem | undefined {
+export function connectionProblem(report: Report, path: Path | undefined, scope: string): Problem | undefined {
+  if (!path) return report.problems[0];
   const step = path[0] === 'steps';
   const after = step && path[2] === 'after';
   const input = step ? String(after ? 'after' : path[3]) : path.slice(0, 2).join('.');

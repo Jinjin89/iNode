@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { add, box, canReference, connect, connectionProblem, content, copyText, duration, emptyReport, emptyValue, expose, filterRuns, graph, groups, handle, history, inputValues, kind, move, parseHandle, layout, reference, rename, runMessages, runTrail, runWorkflow, reveal, set, textPreview, type, workflowDescription, type Workflow, type Description, type Reference, type History, type Run } from './model';
+import { add, box, canReference, connect, connectionProblem, content, copyText, duration, emptyReport, emptyValue, expose, filterRuns, graph, group, groups, handle, history, inputValues, kind, move, parseHandle, layout, reference, rename, runMessages, runTrail, runWorkflow, reveal, set, textPreview, type, workflowDescription, type Workflow, type Description, type Reference, type History, type Run } from './model';
 
 const catalog: Description[] = [
   { name: 'text.upper', inputs: { text: 'text' }, outputs: { text: 'text' } },
@@ -76,6 +76,85 @@ describe('document edits', () => {
     expect(rename(tiny, 'outputs', 'text', 'word', report).outputs).toEqual({ word: '=b.text' });
     const positioned = set(tiny, ['view', 'positions', handle(['steps', 'a'])], { x: 10, y: 20 });
     expect(rename(positioned, 'steps', 'a', 'c', report).view?.positions).toEqual({ [handle(['steps', 'c'])]: { x: 10, y: 20 } });
+  });
+});
+
+describe('grouping steps', () => {
+  const flow: Workflow = {
+    inputs: { word: { type: 'text', default: 'hi' } },
+    steps: {
+      source: { use: 'source' }, gate: { use: 'gate' },
+      a: { use: 'first', in: { data: ['=source.data.left', '=source.data.right', '=inputs.word'], literal: '==source.data' }, after: ['gate'] },
+      b: { use: 'second', in: { value: '=a.value', do: { use: { outputs: { result: '=inputs.word' } }, in: { word: '=source.data.left' } } }, after: ['a', 'gate'] },
+      c: { use: 'third', in: { data: { first: '=a.value', last: '=b.value.part' } }, after: ['a', 'b', 'source'] },
+      node: { use: 'other' },
+    },
+    outputs: { result: ['=b.value.part', { first: '=a.value' }], unchanged: '=source.data' },
+    view: { positions: { [handle(['steps', 'a'])]: { x: 300, y: 50 }, [handle(['steps', 'b'])]: { x: 500, y: 200 }, [handle(['steps', 'c'])]: { x: 800, y: 100 } }, zoom: 1 },
+  };
+  const reference = (path: (string | number)[], from: string[]): Reference => ({ step: '(inline)', input: '', path, from });
+  const checked = { ...emptyReport, references: [
+    reference(['steps', 'a', 'in', 'data', 0], ['source', 'data', 'left']), reference(['steps', 'a', 'in', 'data', 1], ['source', 'data', 'right']),
+    reference(['steps', 'a', 'in', 'data', 2], ['inputs', 'word']), reference(['steps', 'b', 'in', 'value'], ['a', 'value']),
+    reference(['steps', 'b', 'in', 'do', 'in', 'word'], ['source', 'data', 'left']),
+    reference(['steps', 'c', 'in', 'data', 'first'], ['a', 'value']), reference(['steps', 'c', 'in', 'data', 'last'], ['b', 'value', 'part']),
+    reference(['outputs', 'result', 0], ['b', 'value', 'part']), reference(['outputs', 'result', 1, 'first'], ['a', 'value']),
+    reference(['outputs', 'unchanged'], ['source', 'data']),
+  ], nodes: { [JSON.stringify(['steps', 'source'])]: { outputs: { data: 'object{left: text, right: text}' } } } };
+
+  it('shares an input per source output, preserving paths, captured bindings and internal scopes', () => {
+    const { workflow, name } = group(flow, ['a', 'b'], checked);
+    expect(name).toBe('node2');
+    const step = workflow.steps!.node2, inner = step.use as Workflow;
+    expect(step.in).toEqual({ data: '=source.data', word: '=inputs.word' });
+    expect(inner.inputs).toEqual({ data: 'object{left: text, right: text}', word: 'text' });
+    expect(inner.steps!.a.in).toEqual({ data: ['=inputs.data.left', '=inputs.data.right', '=inputs.word'], literal: '==source.data' });
+    expect(inner.steps!.b.in!.value).toBe('=a.value');
+    expect(inner.steps!.b.in!.do).toEqual({ use: { outputs: { result: '=inputs.word' } }, in: { word: '=inputs.data.left' } });
+  });
+
+  it('exposes each used output once and rewrites outside and workflow output paths', () => {
+    const { workflow } = group(flow, ['a', 'b'], checked);
+    expect((workflow.steps!.node2.use as Workflow).outputs).toEqual({ value: '=a.value', value2: '=b.value' });
+    expect(workflow.steps!.c.in).toEqual({ data: { first: '=node2.value', last: '=node2.value2.part' } });
+    expect(workflow.outputs).toEqual({ result: ['=node2.value2.part', { first: '=node2.value' }], unchanged: '=source.data' });
+  });
+
+  it('keeps internal after relations and carries both directions across the boundary once', () => {
+    const { workflow } = group(flow, ['a', 'b'], checked);
+    expect(workflow.steps!.node2.after).toEqual(['gate']);
+    expect(workflow.steps!.c.after).toEqual(['node2', 'source']);
+    const inner = workflow.steps!.node2.use as Workflow;
+    expect(inner.steps!.a.after).toEqual([]);
+    expect(inner.steps!.b.after).toEqual(['a']);
+  });
+
+  it('centres the closed new step on the group and keeps relative positions and other view data', () => {
+    const { workflow } = group(flow, ['a', 'b'], checked);
+    const before = graph(flow, [], undefined, checked).nodes.filter(node => ['a', 'b'].includes(String(parseHandle(node.id)[1])));
+    const after = graph(workflow, []).nodes.find(node => node.id === handle(['steps', 'node2']))!;
+    expect(after.position.x + after.measured.width / 2).toBe((300 + 500 + before[1].measured.width) / 2);
+    expect(after.position.y + after.measured.height / 2).toBe((50 + Math.max(...before.map(node => node.position.y + node.measured.height))) / 2);
+    expect((workflow.steps!.node2.use as Workflow).view?.positions).toEqual({ [handle(['steps', 'a'])]: { x: 0, y: 0 }, [handle(['steps', 'b'])]: { x: 200, y: 150 } });
+    expect(workflow.view?.positions[handle(['steps', 'a'])]).toBeUndefined();
+    expect(workflow.view?.positions[handle(['steps', 'c'])]).toEqual(flow.view?.positions[handle(['steps', 'c'])]);
+    expect(workflow.view?.zoom).toBe(1);
+  });
+
+  it('passes any tentative grouping refusal through unchanged, including problems outside the group', () => {
+    const problem = { step: '(inline)/c', input: 'after', message: 'dependency on "node2" makes a cycle; remove that reference or after entry' };
+    expect(connectionProblem({ ...emptyReport, problems: [problem] }, undefined, '(inline)')).toBe(problem);
+    expect(connectionProblem(emptyReport, undefined, '(inline)')).toBeUndefined();
+  });
+
+  it('groups in one history edit and undo restores the exact document without mutating it', () => {
+    const document = JSON.stringify(flow);
+    const initial: History = { present: flow, past: [], future: [] };
+    const grouped = history(initial, { type: 'edit', value: group(flow, ['a', 'b'], checked).workflow });
+    expect(grouped.past).toHaveLength(1);
+    expect(JSON.stringify(history(grouped, { type: 'undo' }).present)).toBe(document);
+    expect(JSON.stringify(flow)).toBe(document);
+    expect(history(history(grouped, { type: 'undo' }), { type: 'redo' }).present).toBe(grouped.present);
   });
 });
 

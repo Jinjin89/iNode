@@ -23,7 +23,7 @@ A **plugin** is a folder of more nodes.
 ```
 
 ## Try it
-Click a step or port row to edit it in place; click empty canvas or press Escape to close it. Guide can stay open beside your work.
+Click a step to edit; Escape closes it. Shift+click steps, **Make a node**, open it, then **Save as** to reuse it.
 
 **1. Start a project.**
 - Copy `examples/` to your own folder.
