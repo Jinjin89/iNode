@@ -141,7 +141,7 @@ inode stop
 ```
 
 ## The two file forms
-A `.flow` file is a workflow node; its file name is its node name. `=upper.text` selects a step's output and `=inputs.text` selects a workflow input, also inside lists or objects; dots select fields or list items (`.0` is the first), and `==` writes an actual leading `=`.
+A `.flow` filename names its workflow node. References select outputs (`=upper.text`) or inputs (`=inputs.text`), inside lists and objects too. Dots select fields or items (`.0` is first); `==` writes a literal `=`.
 ```yaml
 # shout.flow
 inputs: {text: text}
@@ -150,13 +150,13 @@ steps:
 outputs: {text: =upper.text}
 ```
 
-A `.node` file describes a program: here `cat` copies its input JSON to its output unchanged.
+A `.node` file turns a program into a node. Here `wc -w` counts words in `text`, returning `count`. Without `stdin`/`stdout`, programs read all inputs as one JSON object and print all outputs as one.
 ```yaml
-# nodes/echo.node
-doc: Return the text given to it.
+# nodes/word_count.node
+doc: Count words.
 inputs: {text: text}
-outputs: {text: text}
-run: cat
+outputs: {count: number}
+run: {args: [wc, -w], stdin: =inputs.text, stdout: count}
 ```
 
 ## When something goes wrong

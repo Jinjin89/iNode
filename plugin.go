@@ -17,7 +17,7 @@ type Plugin struct {
 	Source   string   `json:"source,omitempty" yaml:"source,omitempty"`
 	Doc      string   `json:"doc,omitempty" yaml:"doc,omitempty"`
 	Accesses []string `json:"accesses,omitempty" yaml:"accesses,omitempty"`
-	Setup    string   `json:"setup,omitempty" yaml:"setup,omitempty"`
+	Setup    any      `json:"setup,omitempty" yaml:"setup,omitempty"`
 	State    string   `json:"state,omitempty" yaml:"-"`
 }
 
@@ -27,6 +27,13 @@ func (plugin Plugin) validate() error {
 	}
 	if plugin.Version == "" {
 		return fmt.Errorf("plugin %q: supply a version", plugin.Name)
+	}
+	if plugin.Setup != nil {
+		args, err := argumentList(plugin.Setup, "setup")
+		if err == nil {
+			_, err = arguments(args, nil, "setup", true)
+		}
+		return err
 	}
 	return nil
 }
@@ -101,12 +108,12 @@ func (p *Project) fetchPlugin(ctx context.Context, source string) (Plugin, strin
 		}
 	} else {
 		url, ref, _ := strings.Cut(source, "#")
-		_, err = process(ctx, p.dir, nil, "git", "clone", "--", url, stage)
+		_, err = process(ctx, p.dir, nil, nil, "git", "clone", "--", url, stage)
 		if err == nil && ref != "" {
 			var commit []byte
-			commit, err = process(ctx, stage, nil, "git", "rev-parse", "--verify", "--end-of-options", ref+"^{commit}")
+			commit, err = process(ctx, stage, nil, nil, "git", "rev-parse", "--verify", "--end-of-options", ref+"^{commit}")
 			if err == nil {
-				_, err = process(ctx, stage, nil, "git", "checkout", "--detach", strings.TrimSpace(string(commit)))
+				_, err = process(ctx, stage, nil, nil, "git", "checkout", "--detach", strings.TrimSpace(string(commit)))
 			}
 		}
 	}
@@ -116,6 +123,9 @@ func (p *Project) fetchPlugin(ctx context.Context, source string) (Plugin, strin
 	}
 	if err == nil {
 		err = plugin.validate()
+		if err != nil {
+			err = fmt.Errorf("%s: %w", filepath.Join(stage, "plugin"), err)
+		}
 	}
 	if err == nil && plugin.Doc == "" {
 		err = fmt.Errorf("plugin %q: supply doc", plugin.Name)
@@ -156,8 +166,10 @@ func (p *Project) Add(ctx context.Context, source string, out io.Writer) error {
 	if err := os.Rename(stage, destination); err != nil {
 		return err
 	}
-	if plugin.Setup != "" {
-		if _, err = process(ctx, destination, nil, "sh", "-c", plugin.Setup); err != nil {
+	if plugin.Setup != nil {
+		raw, _ := argumentList(plugin.Setup, "setup")
+		args, _ := arguments(raw, nil, "setup", false)
+		if _, err = process(ctx, destination, nil, nil, args...); err != nil {
 			err = fmt.Errorf("plugin %q setup: %w", plugin.Name, err)
 		}
 	}

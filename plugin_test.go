@@ -24,8 +24,8 @@ func pluginFolder(t *testing.T) string {
 version: "1"
 doc: Add a short greeting
 accesses: [Reads and writes its own greeting file.]
-setup: printf x >> setup_count; printf hi > nodes/greeting.txt
-`})
+setup: [python3, "setup count.py"]
+`, "setup count.py": "from pathlib import Path\nwith open('setup_count', 'a') as f: f.write('x')\nPath('nodes/greeting.txt').write_text('hi')\n"})
 	return dir
 }
 
@@ -86,7 +86,7 @@ func TestPluginFolder(t *testing.T) {
 		t.Fatalf("plugin list: %+v", plugins)
 	}
 	var recorded []Plugin
-	if err := readYAML(filepath.Join(p.dir, "plugins"), &recorded); err != nil || len(recorded) != 1 || recorded[0].Doc != "" || recorded[0].Setup != "" || len(recorded[0].Accesses) != 0 {
+	if err := readYAML(filepath.Join(p.dir, "plugins"), &recorded); err != nil || len(recorded) != 1 || recorded[0].Doc != "" || recorded[0].Setup != nil || len(recorded[0].Accesses) != 0 {
 		t.Fatalf("shared file must contain only name, version and source: %+v, %v", recorded, err)
 	}
 	for _, test := range []struct {
@@ -193,7 +193,7 @@ func TestFailedSetupAndReinstall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeFiles(t, source, map[string]string{"plugin": strings.Replace(string(manifest), "printf x >> setup_count; printf hi > nodes/greeting.txt", "printf broken >&2; exit 1", 1)})
+	writeFiles(t, source, map[string]string{"plugin": strings.Replace(string(manifest), `[python3, "setup count.py"]`, "python3 fail.py", 1), "fail.py": "import sys\nsys.stderr.write('broken')\nsys.exit(1)\n"})
 	p := project(t, nil)
 	var out bytes.Buffer
 	if err := p.Add(context.Background(), source, &out); err == nil || !strings.Contains(err.Error(), "broken") || !strings.Contains(out.String(), "Accesses:") {
@@ -234,6 +234,40 @@ func TestPluginNames(t *testing.T) {
 		if err := p.Add(context.Background(), source, io.Discard); err == nil || !strings.Contains(err.Error(), "rename plugin") {
 			t.Fatalf("invalid plugin name %q: %v", name, err)
 		}
+	}
+}
+
+func TestPluginSetupArguments(t *testing.T) {
+	for _, setup := range []any{`python3 "one argument.py"`, "echo hi; touch marker", "echo $(touch marker)"} {
+		data, err := json.Marshal(Plugin{Name: "tiny", Version: "1", Doc: "Test setup", Setup: setup})
+		if err != nil {
+			t.Fatal(err)
+		}
+		source := t.TempDir()
+		writeFiles(t, source, map[string]string{"plugin": string(data)})
+		p := project(t, nil)
+		if _, err := p.InspectPlugin(t.Context(), source); err == nil || !strings.Contains(err.Error(), "/plugin: setup:") || !strings.Contains(err.Error(), `setup: [program, "one argument"]`) {
+			t.Fatalf("unsafe setup: %v", err)
+		}
+	}
+	// Setup lists preserve the same literal characters as node arguments.
+	source := pluginFolder(t)
+	value := "space ' \"; $(touch marker)\n"
+	data, err := json.Marshal(Plugin{Name: "tiny", Version: "1", Doc: "Test setup", Setup: []any{"python3", "setup.py", value}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFiles(t, source, map[string]string{"plugin": string(data), "setup.py": "from pathlib import Path\nimport sys\nPath('received').write_text(sys.argv[1])\n"})
+	p := project(t, nil)
+	if err := p.Add(t.Context(), source, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	received, err := os.ReadFile(filepath.Join(p.pluginDir("tiny"), "received"))
+	if err != nil || string(received) != value {
+		t.Fatalf("setup argument: %q, %v", received, err)
+	}
+	if _, err := os.Stat(filepath.Join(p.pluginDir("tiny"), "marker")); !os.IsNotExist(err) {
+		t.Fatal("setup argument was executed")
 	}
 }
 

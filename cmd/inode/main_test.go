@@ -227,7 +227,10 @@ func TestSecretCommands(t *testing.T) {
 	if err := os.Mkdir("nodes", 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile("nodes/length.node", []byte("doc: Length\ninputs: {token: secret}\noutputs: {length: number}\nrun: python3 -c 'import json,sys; print(json.dumps({\"length\":len(json.load(sys.stdin)[\"token\"])}))'"), 0600); err != nil {
+	if err := os.WriteFile("nodes/length.node", []byte("doc: Length\ninputs: {token: secret}\noutputs: {length: number}\nrun: python3 length.py"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("nodes/length.py", []byte("import json,sys\nprint(json.dumps({'length':len(json.load(sys.stdin)['token'])}))\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	for _, test := range []struct {
@@ -398,7 +401,7 @@ func TestInterruptRunCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, text := range map[string]string{
-		"wait.node": "doc: Wait\nrun: exec python3 wait.py",
+		"wait.node": "doc: Wait\nrun: python3 wait.py",
 		"wait.py":   "import json, signal, sys\njson.load(sys.stdin)\nopen('ready', 'w').close()\nsignal.pause()\n",
 	} {
 		if err := os.WriteFile(filepath.Join("nodes", name), []byte(text), 0600); err != nil {

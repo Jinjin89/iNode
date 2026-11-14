@@ -110,7 +110,7 @@ A plugin is a folder with a manifest (name, version, a description, what it says
 - **Requests to the core** while running: call a node it was given, read or write a file, read or store its own secrets and small state.
 - **For a trigger kind:** activate a trigger with its settings, submit events, deactivate it. Events carry only plain data and files.
 
-The simplest node is a description file plus any program that reads its inputs as JSON and prints its outputs as JSON (see "Writing a node"). Plugins that keep models loaded or call other nodes run as a long-lived process and must accept new runs while waiting on a call.
+A node can be a description file plus a program (see "Writing a node"). Plugins that keep models loaded or call other nodes run as a long-lived process and must accept new runs while waiting on a call.
 
 - **Discover:** an index that is only a list of names and URLs; no hosted service is required.
 - **Install:** always an explicit action, from a name, a git URL or a local path, after showing what the plugin says it accesses. A plugin is trusted code; nothing is enforced. Adding a plugin again replaces it. Each plugin gets its own process and environment, so plugins cannot break each other's dependencies.
@@ -118,7 +118,7 @@ The simplest node is a description file plus any program that reads its inputs a
 
 **Adapters**, in order of value:
 
-1. **Command-line tools.** A bundled generic command node turns inputs into arguments and files and collects output files, so wrapping ffmpeg or pandoc needs only a description.
+1. **Command-line tools.** Ordinary `.node` descriptions bind arguments, flags, stdin, stdout and environment without a shell. File bindings follow with the managed file store; wrapping ffmpeg or pandoc then needs only a description.
 2. **MCP servers.** Each tool becomes a node. Tools without an output schema return one `result` object. Tools that ask for more input mid-call are not supported.
 3. **OpenAPI.** Each operation becomes a node. This gives API calls, not finished integrations; paging, polling and sign-in are built on top as workflows.
 4. **Library functions.** Signature to ports, as scaffolding for functions that already fit.
@@ -132,7 +132,7 @@ The simplest node is a description file plus any program that reads its inputs a
 | Load and check workflows | Every capability: http, files, text, AI models, media |
 | Runs, child runs, records | `map`, `choose`, `repeat`, `retry`, `try`, `agent` |
 | Triggers: definitions, on/off, waiting events | Trigger kinds: schedule, web request, folder |
-| File store, secret store, plugin state | Adapters: command, MCP, OpenAPI, ComfyUI |
+| File store, secret store, plugin state | Program descriptions; MCP, OpenAPI, ComfyUI adapters |
 | Plugin host and the interface used by both clients | |
 
 The core contains no special nodes. The bundled plugin follows the same contract as any other, and the core does not recognise `map` or `choose` by name.
@@ -168,7 +168,17 @@ outputs: {ok: =sent.ok}
 
 ## Writing a node
 
-A node description in `nodes/<name>.node` gives its description, inputs, outputs, optional `no_outside_effect` mark and `run` command. The command runs in that folder, reads one JSON object of inputs and prints one JSON object of outputs; see the [tutorial’s file forms](tutorial.md#the-two-file-forms). A plugin is a folder of these nodes with a manifest.
+A `.node` file describes a program as a node. In `nodes/<name>.node`, declare `doc`, inputs, outputs, optional `no_outside_effect` and `run`. Programs run there without a shell. `run` accepts space-separated words, an argument list, or `{args: [...]}`; quoting/shell characters require a list.
+
+| Binding | What it does |
+|---|---|
+| `args: [..., =inputs.x]` | One argument per scalar/list item. |
+| `{flag: --name, value: =inputs.x}` | True sends flag; false omits; scalar/list repeats flag/value pairs. |
+| `stdin: =inputs.x` | Text unchanged; otherwise JSON. |
+| `stdout: count` | One declared output: text unchanged; otherwise one JSON value. |
+| `env: {TOKEN: =inputs.token}` | Scalars; secrets only here or stdin. |
+
+Unbound streams use JSON objects of all inputs/outputs. Bad bindings fail at load; nonzero exit fails with scrubbed stderr. Plugin `setup` uses the same string/list rule. See [file forms](tutorial.md#the-two-file-forms).
 
 ## Limits
 

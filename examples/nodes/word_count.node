@@ -1,0 +1,5 @@
+doc: Count the words in a text with wc.
+inputs: {text: text}
+outputs: {count: number}
+no_outside_effect: true
+run: {args: [wc, -w], stdin: =inputs.text, stdout: count}

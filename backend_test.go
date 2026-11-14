@@ -427,7 +427,7 @@ func TestConcurrentPluginRequests(t *testing.T) {
 }
 
 func TestStopDuringPluginSetup(t *testing.T) {
-	p := fileProject(t, map[string]string{"nodes/wait.node": "doc: Wait\nrun: exec python3 -c 'import signal; signal.pause()'"})
+	p := fileProject(t, map[string]string{"nodes/wait.node": "doc: Wait\nrun: python3 wait.py", "nodes/wait.py": "import signal\nsignal.pause()\n"})
 	client := runningBackend(t, p.dir)
 	var id string
 	json.Unmarshal(request(t, client, "run", "wait", Values{}, "")[0], &id)
@@ -437,7 +437,7 @@ func TestStopDuringPluginSetup(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFiles(t, source, map[string]string{
-		"plugin":  strings.Replace(string(manifest), "printf x >> setup_count; printf hi > nodes/greeting.txt", "exec python3 wait.py", 1),
+		"plugin":  strings.Replace(string(manifest), `[python3, "setup count.py"]`, "python3 wait.py", 1),
 		"wait.py": "import signal\nopen('ready', 'w').close()\nsignal.pause()\n",
 	})
 	done := make(chan error, 1)
