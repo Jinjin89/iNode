@@ -26,6 +26,7 @@ type backend struct {
 	wg       sync.WaitGroup
 	requests sync.WaitGroup
 	triggers *triggerService
+	host     *pluginHost
 }
 
 type activeRun struct {
@@ -92,9 +93,11 @@ func Serve(ctx context.Context, dir string) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	b := &backend{dir: dir, ctx: ctx, cancel: cancel, offline: make(chan struct{}), active: map[string]*activeRun{}}
-	if err := b.openTriggers(p, runs); err != nil {
-		return err
-	}
+	b.host = &pluginHost{ctx: ctx, processes: map[string]*pluginProcess{}}
+	defer b.host.close()
+	p.host = b.host
+	ready := make(chan struct{})
+	var startupErr error
 	page := frontend()
 	server := &http.Server{BaseContext: func(net.Listener) context.Context { return ctx }, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/x-ndjson")
@@ -155,6 +158,19 @@ func Serve(ctx context.Context, dir string) error {
 		}
 		if err == nil {
 			defer b.requests.Done()
+			if n, known := OperationArgs(name); known && len(args) == n+1 && !Operations[name].early {
+				select {
+				case <-ready:
+					err = startupErr
+					if err == nil {
+						err = r.Context().Err()
+					}
+				case <-r.Context().Done():
+					err = r.Context().Err()
+				}
+			}
+		}
+		if err == nil {
 			err = (parameters{ctx: r.Context(), backend: b, send: send}).invoke(name, args[1:])
 		}
 		if err != nil {
@@ -166,6 +182,16 @@ func Serve(ctx context.Context, dir string) error {
 	})}
 	ended := make(chan error, 1)
 	go func() { ended <- server.Serve(listener) }()
+	go func() {
+		defer close(ready)
+		startupErr = p.load()
+		if startupErr == nil && ctx.Err() == nil {
+			startupErr = b.openTriggers(p, runs)
+		}
+		if startupErr != nil {
+			cancel()
+		}
+	}()
 	select {
 	case <-ctx.Done():
 	case err = <-ended:
@@ -173,6 +199,11 @@ func Serve(ctx context.Context, dir string) error {
 	b.mu.Lock()
 	b.cancel()
 	b.mu.Unlock()
+	<-ready
+	if err == nil {
+		err = startupErr
+	}
+	b.host.close()
 	b.wg.Wait()
 	os.Remove(backendFile(dir))
 	close(b.offline)

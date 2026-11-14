@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { add, box, canReference, connect, connectionProblem, content, copyText, duration, emptyReport, emptyValue, expose, filterRuns, graph, group, groups, handle, history, inputValues, kind, move, parseHandle, layout, reference, rename, runMessages, runTrail, runWorkflow, reveal, set, textPreview, type, workflowDescription, fileInput, fileLabel, fileValue, type Workflow, type Description, type Reference, type History, type Run } from './model';
+import { add, box, canReference, connect, connectionProblem, content, copyText, commandText, duration, emptyReport, emptyValue, expose, filterRuns, graph, group, groups, handle, history, inputValues, kind, move, parseHandle, layout, reference, rename, runMessages, runTrail, runWorkflow, reveal, set, textPreview, type, workflowDescription, fileInput, fileLabel, fileValue, type Workflow, type Description, type Reference, type History, type Run } from './model';
+
+it('shows literal program arguments as a command with safe quoting', () => {
+  expect(commandText(['python3', 'counter.py'])).toBe('python3 counter.py');
+  expect(commandText(['tool', '', 'one argument', "a'b", '$(touch marker)', 'line\nbreak', '猫.txt'])).toBe("tool '' 'one argument' 'a'\\''b' '$(touch marker)' 'line\nbreak' 猫.txt");
+});
 
 it('keeps file paths and copied references, and shares file labels across views', () => {
   const value = { $file: 'sha256:' + 'a'.repeat(64), name: '猫 file.bin', size: 1536 };
@@ -369,6 +374,7 @@ describe('canvas building', () => {
     expect(asked.inputs?.text2).toEqual({ type: 'text', default: 'hi' });
     expect(asked.steps?.a.in?.text).toBe('=inputs.text2');
     expect(expose(tiny, 'inputs', 'a', 'prefix', { type: 'text', kind: 'text' }).inputs?.prefix).toEqual({ type: 'text' });
+    expect(expose(tiny, 'inputs', 'a', 'prefix', { type: 'text', optional: true }).inputs?.prefix).toEqual({ type: 'text' });
     for (const written of ['written', '=b.text', '==literal']) {
       const replaced = expose(set(tiny, ['steps', 'a', 'in', 'text'], written), 'inputs', 'a', 'text', { type: 'text' });
       expect(replaced.inputs?.text2).toEqual({ type: 'text' });

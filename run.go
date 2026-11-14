@@ -232,7 +232,7 @@ func (e *execution) call(ctx context.Context, parent *Record, node *Step, locati
 	}
 	var open string
 	for name, port := range node.plan.Inputs {
-		if _, filled := inputs[name]; !filled && port.Default == nil {
+		if _, filled := inputs[name]; !filled && port.required() {
 			inputs[name], open = value, name
 		}
 	}

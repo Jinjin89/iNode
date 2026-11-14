@@ -1,0 +1,59 @@
+openapi: 3.0.3
+info: {title: Pet shop, version: "1"}
+servers:
+  - url: /v1
+security:
+  - token: []
+paths:
+  /pets/{id}:
+    parameters:
+      - $ref: '#/components/parameters/id'
+    get:
+      operationId: pets.get
+      summary: Fetch one pet.
+      description: A longer text that the one-line summary replaces.
+      parameters:
+        - {name: X-Trace, in: header, required: true, schema: {type: string}}
+        - {name: verbose, in: query, required: true, schema: {type: boolean}}
+        - {name: sid, in: cookie, schema: {type: string}}
+    put:
+      security: [{key: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/Pet'}
+  /pets:
+    get:
+      operationId: listPets
+      security: []
+      parameters:
+        - {name: tag, in: query, schema: {type: array, items: {type: string}}}
+        - {name: limit, in: query, required: true, description: Maximum pets to return., schema: {type: integer, enum: [0, 2]}}
+        - {name: a.b, in: query, schema: {type: string}}
+        - {name: 'filter[name]', in: query, schema: {type: string}}
+  /photo:
+    get: {operationId: photo}
+  /fail:
+    get: {operationId: fail}
+  /slow:
+    get: {operationId: slow}
+  /basic:
+    get: {operationId: basic, security: [{login: []}]}
+components:
+  parameters:
+    id: {name: id, in: path, required: true, schema: {type: integer}}
+  schemas:
+    Pet:
+      type: object
+      additionalProperties: false
+      required: [name, parent]
+      properties:
+        name: {type: string}
+        parent: {$ref: '#/components/schemas/Pet'}
+  securitySchemes:
+    token: {type: http, scheme: bearer}
+    key: {type: apiKey, in: query, name: api_key}
+    login: {type: http, scheme: Basic}
+    session: {type: apiKey, in: cookie, name: sid}
+    oauth: {type: oauth2, flows: {}}

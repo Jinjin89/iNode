@@ -1,5 +1,5 @@
 export type Values = Record<string, any>;
-export type Port = string | { type: string; kind?: string; item?: Port; fields?: Record<string, Port>; default?: any };
+export type Port = string | { type: string; kind?: string; item?: Port; fields?: Record<string, Port>; default?: any; optional?: boolean };
 export type Definition = string | Workflow;
 export type Step = { use: Definition; in?: Values; after?: string[] };
 export type Workflow = { doc?: string; inputs?: Record<string, Port>; steps?: Record<string, Step>; outputs?: Values; view?: Values };
@@ -24,6 +24,7 @@ export const reference = (value: any): boolean => typeof value === 'string' && v
 export const handle = (path: Path): string => encodeURIComponent(JSON.stringify(path));
 export const parseHandle = (id: string): Path => JSON.parse(decodeURIComponent(id));
 export const copyText = (value: any): string => typeof value === 'string' ? value : JSON.stringify(value, null, 2) ?? '';
+export const commandText = (args: string[]): string => args.map(word => !word || /[ \t\r\n\v\f'"$`\\|&;<>*?\[\]{}()!~#]/u.test(word) ? "'" + word.replaceAll("'", "'\\''") + "'" : word).join(' ');
 export const fileValue = (value: any): boolean => value !== null && typeof value === 'object' && Object.hasOwn(value, '$file') && typeof value.$file === 'string';
 export function fileLabel(value: any): string {
   if (!fileValue(value) || typeof value.name !== 'string' || !Number.isFinite(value.size) || value.size < 0) return copyText(value);

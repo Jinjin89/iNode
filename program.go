@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -13,6 +14,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 )
 
@@ -24,13 +26,26 @@ type program struct {
 	Files  map[string]string `json:"files"`
 }
 
+func CommandText(args []any) string {
+	words := make([]string, len(args))
+	for i, value := range args {
+		word := value.(string)
+		if word == "" || strings.ContainsAny(word, " \t\r\n\v\f'\"$`\\|&;<>*?[]{}()!~#") {
+			word = "'" + strings.ReplaceAll(word, "'", "'\\''") + "'"
+		}
+		words[i] = word
+	}
+	return strings.Join(words, " ")
+}
+
 func argumentList(value any, key string) ([]any, error) {
 	if text, ok := value.(string); ok {
-		if strings.ContainsAny(text, "\"'|&;<>$`()*?[]{}~!#\\\r\n") {
-			return nil, fmt.Errorf("%s: write an argument list such as %s: [program, \"one argument\"] instead of shell quoting or characters", key, key)
+		words, err := SplitCommand(text)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w; use an argument list for literal shell characters", key, err)
 		}
 		args := []any{}
-		for _, word := range strings.Fields(text) {
+		for _, word := range words {
 			args = append(args, word)
 		}
 		return args, nil
@@ -41,8 +56,21 @@ func argumentList(value any, key string) ([]any, error) {
 	return nil, fmt.Errorf("%s: supply a program or an argument list, such as %s: [wc, -w]", key, key)
 }
 
+var unsetInput = errors.New("input is not filled; use a declared input path")
+
 func programValue(value any, inputs Values, key string) (any, error) {
-	result, _, err := resolve(value, anyType, nil, Values{"inputs": inputs})
+	result, err := walk(value, anyType, nil, func(value any, _ Type, _ valuePath) (any, error) {
+		if text, ok := value.(string); ok {
+			if parts := referenceParts(text); len(parts) > 1 && parts[0] == "inputs" {
+				if _, filled := inputs[parts[1]]; !filled {
+					return nil, unsetInput
+				}
+			}
+			resolved, _, err := resolve(text, anyType, nil, Values{"inputs": inputs})
+			return resolved, err
+		}
+		return value, nil
+	})
 	if err != nil {
 		if problem, ok := err.(Problem); ok {
 			err = fmt.Errorf("%s", problem.Message)
@@ -107,13 +135,14 @@ func arguments(args []any, inputs Values, key string, checking bool) ([]string, 
 			where += ".value"
 		}
 		value, err := programValue(raw, inputs, where)
+		items, list := value.([]any)
+		if !checking && (errors.Is(err, unsetInput) || list && len(items) == 0) {
+			continue
+		}
 		if err != nil {
 			return nil, err
 		}
 		t := typeOf(value)
-		if items, ok := value.([]any); !checking && ok && len(items) == 0 {
-			continue
-		}
 		if containsType(t, "secret") {
 			return nil, fmt.Errorf("%s: secrets cannot be arguments; bind the input through stdin or env instead", where)
 		}
@@ -129,7 +158,6 @@ func arguments(args []any, inputs Values, key string, checking bool) ([]string, 
 			}
 			continue
 		}
-		items, list := value.([]any)
 		if !list {
 			items = []any{value}
 		}
@@ -243,7 +271,13 @@ func (p program) run(ctx context.Context, project *Project, dir string, inputs V
 				return nil, err
 			}
 			if referenceParts(p.Files[name])[0] == "inputs" {
-				value, _ := programValue(p.Files[name], inputs, "run.files."+name)
+				value, err := programValue(p.Files[name], inputs, "run.files."+name)
+				if errors.Is(err, unsetInput) {
+					continue
+				}
+				if err != nil {
+					return nil, err
+				}
 				source, err := os.Open(project.blob(value.(fileRef)))
 				if err != nil {
 					return nil, err
@@ -259,6 +293,9 @@ func (p program) run(ctx context.Context, project *Project, dir string, inputs V
 	var input any = inputs
 	if p.Stdin != nil {
 		input, err = programValue(p.Stdin, inputs, "run.stdin")
+		if errors.Is(err, unsetInput) {
+			input, err = "", nil
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -305,6 +342,9 @@ func (p program) run(ctx context.Context, project *Project, dir string, inputs V
 	env := []string{}
 	for _, name := range keys(p.Env) {
 		value, err := programValue(p.Env[name], inputs, "run.env."+name)
+		if errors.Is(err, unsetInput) {
+			continue
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -425,11 +465,14 @@ func (p *Project) loadNodes(dir, prefix string) error {
 const stderrLimit = 8 * 1024
 
 type stderrTail struct {
+	mu        sync.Mutex
 	data      []byte
 	truncated bool
 }
 
 func (tail *stderrTail) Write(data []byte) (int, error) {
+	tail.mu.Lock()
+	defer tail.mu.Unlock()
 	n := len(data)
 	if n > stderrLimit {
 		data = data[n-stderrLimit:]
@@ -443,19 +486,35 @@ func (tail *stderrTail) Write(data []byte) (int, error) {
 	return n, nil
 }
 
-func process(ctx context.Context, dir string, input io.Reader, output io.Writer, env []string, args ...string) ([]byte, error) {
+func (tail *stderrTail) String() string {
+	tail.mu.Lock()
+	defer tail.mu.Unlock()
+	message := strings.TrimSpace(string(tail.data))
+	if tail.truncated {
+		message = fmt.Sprintf("[stderr truncated; showing last %d bytes]\n%s", stderrLimit, message)
+	}
+	return message
+}
+
+func processCommand(ctx context.Context, dir string, env []string, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
-	cmd.Dir, cmd.Stdin = dir, input
+	cmd.Dir = dir
+	if env != nil {
+		cmd.Env = env
+	}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	return cmd
+}
+
+func process(ctx context.Context, dir string, input io.Reader, output io.Writer, env []string, args ...string) ([]byte, error) {
+	cmd := processCommand(ctx, dir, append(os.Environ(), env...), args...)
+	cmd.Stdin = input
 	var buffer bytes.Buffer
 	if output == nil {
 		output = &buffer
 	}
 	cmd.Stdout = output
-	if len(env) != 0 {
-		cmd.Env = append(os.Environ(), env...)
-	}
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	var stderr stderrTail
 	cmd.Stderr = &stderr
 	err := cmd.Run()
@@ -466,11 +525,7 @@ func process(ctx context.Context, dir string, input io.Reader, output io.Writer,
 		if cmd.ProcessState == nil {
 			return nil, fmt.Errorf("program %q could not start: %w; install it or correct the program name", args[0], err)
 		}
-		message := strings.TrimSpace(string(stderr.data))
-		if stderr.truncated {
-			message = fmt.Sprintf("[stderr truncated; showing last %d bytes]\n%s", stderrLimit, message)
-		}
-		return nil, fmt.Errorf("program %q: %w: %s", args[0], err, message)
+		return nil, fmt.Errorf("program %q: %w: %s", args[0], err, &stderr)
 	}
 	return buffer.Bytes(), nil
 }

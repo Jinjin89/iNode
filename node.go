@@ -19,13 +19,16 @@ type Values = map[string]any
 type Port struct {
 	Type            Type `json:"type" yaml:"type"`
 	Default         any  `json:"default,omitempty" yaml:"default,omitempty"`
+	Optional        bool `json:"optional,omitempty" yaml:"optional,omitempty"`
 	NoOutsideEffect bool `json:"no_outside_effect,omitempty" yaml:"no_outside_effect,omitempty"`
 }
 
 type Ports map[string]Port
 
+func (port Port) required() bool { return !port.Optional && port.Default == nil }
+
 func (port Port) MarshalYAML() (any, error) {
-	if port.Default == nil && !port.NoOutsideEffect {
+	if port.required() && !port.NoOutsideEffect {
 		return port.Type.String(), nil
 	}
 	type declaration Port
@@ -61,17 +64,25 @@ func (ports *Ports) UnmarshalJSON(data []byte) error {
 	*ports = Ports{}
 	for _, name := range keys(raw) {
 		var declaration struct {
-			Type    Type            `json:"type"`
-			Default any             `json:"default"`
-			Kind    json.RawMessage `json:"kind"`
-			Item    json.RawMessage `json:"item"`
-			Fields  json.RawMessage `json:"fields"`
+			Type     Type            `json:"type"`
+			Optional bool            `json:"optional"`
+			Default  json.RawMessage `json:"default"`
+			Kind     json.RawMessage `json:"kind"`
+			Item     json.RawMessage `json:"item"`
+			Fields   json.RawMessage `json:"fields"`
 		}
 		var err error
 		if raw[name][0] == '"' {
 			err = json.Unmarshal(raw[name], &declaration.Type)
 		} else {
 			err = decode(raw[name], &declaration)
+		}
+		if err == nil && declaration.Optional && len(declaration.Default) > 0 {
+			err = fmt.Errorf("choose optional or a default")
+		}
+		port := Port{Type: declaration.Type, Optional: declaration.Optional}
+		if err == nil && len(declaration.Default) > 0 {
+			err = json.Unmarshal(declaration.Default, &port.Default)
 		}
 		if err == nil && declaration.Type.Name == "" {
 			err = fmt.Errorf("specify the port's type")
@@ -82,7 +93,7 @@ func (ports *Ports) UnmarshalJSON(data []byte) error {
 		if err != nil {
 			return Problem{Input: name, Message: err.Error()}
 		}
-		(*ports)[name] = Port{Type: declaration.Type, Default: declaration.Default}
+		(*ports)[name] = port
 	}
 	return nil
 }
@@ -182,16 +193,21 @@ type Project struct {
 	dir     string
 	nodes   map[string]Node
 	plugins []Plugin
+	host    *pluginHost
 	mu      *sync.Mutex
 	publish func(*Record) // Called under mu.
 }
 
 func Open(dir string) (*Project, error) {
+	return openProject(dir, nil)
+}
+
+func openProject(dir string, host *pluginHost) (*Project, error) {
 	dir, err := filepath.Abs(dir)
 	if err != nil {
 		return nil, err
 	}
-	p := &Project{dir: dir, mu: &sync.Mutex{}}
+	p := &Project{dir: dir, mu: &sync.Mutex{}, host: host}
 	return p, p.load()
 }
 
@@ -247,7 +263,29 @@ func (p *Project) load() error {
 	if err := p.loadNodes(filepath.Join(p.dir, "nodes"), ""); err != nil {
 		return err
 	}
-	return p.loadPlugins()
+	if p.plugins, err = readPlugins(p.dir); err != nil {
+		return err
+	}
+	processes := map[int]*pluginProcess{}
+	for i, plugin := range p.plugins {
+		if plugin.State == "installed" {
+			if err := p.loadNodes(filepath.Join(p.pluginDir(plugin.Name), "nodes"), plugin.Name+"."); err != nil {
+				return err
+			}
+			if plugin.Process != nil && p.host != nil {
+				processes[i] = p.host.launch(p, plugin)
+			}
+		}
+	}
+	for i, plugin := range p.plugins {
+		if plugin.State == "installed" && plugin.Process != nil {
+			if process := processes[i]; process != nil {
+				p.attachProcess(process)
+			}
+			p.plugins[i].State, p.plugins[i].Error = p.host.state(plugin.Name)
+		}
+	}
+	return nil
 }
 
 func readYAML(path string, target any) error {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -14,6 +15,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -476,6 +478,194 @@ func TestStopDuringPluginSetup(t *testing.T) {
 	}
 	if _, err := os.Stat(p.pluginDir("tiny")); !os.IsNotExist(err) {
 		t.Fatal("interrupted setup kept its installed folder")
+	}
+}
+
+func startupProject(t *testing.T, delays ...int) *Project {
+	t.Helper()
+	p := fileProject(t, nil)
+	plugins := []Plugin{}
+	for i, delay := range delays {
+		name := []string{"first", "second"}[i]
+		manifest := Plugin{Name: name, Version: "1", Doc: "Delayed plugin", Process: []any{"python3", "plugin.py"}}
+		data, _ := json.Marshal(manifest)
+		body := strings.Replace(fakePlugin, "for line in sys.stdin:", fmt.Sprintf("Path('started').write_text(json.dumps({'pid': os.getpid(), 'at': time.time()}))\ntime.sleep(%d)\nfor line in sys.stdin:", delay), 1)
+		body = strings.Replace(body, " if m['method']=='describe':", " if m['method']=='describe':\n  Path('described').write_text(json.dumps(time.time()))", 1)
+		writeFiles(t, p.dir, map[string]string{
+			".inode/plugins/" + name + "/plugin":    string(data),
+			".inode/plugins/" + name + "/plugin.py": body,
+		})
+		plugins = append(plugins, Plugin{Name: name, Version: "1", Source: name})
+	}
+	if err := p.savePlugins(plugins); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func startupReply(t *testing.T, client *Client, operation string) json.RawMessage {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
+	defer cancel()
+	var result json.RawMessage
+	if err := client.Call(ctx, operation, nil, func(data json.RawMessage) error { result = append(json.RawMessage(nil), data...); return nil }); err != nil {
+		t.Fatalf("%s did not answer within 300ms: %v", operation, err)
+	}
+	return result
+}
+
+func TestBackendStartupServesAndWaits(t *testing.T) {
+	p := startupProject(t, 3, 3)
+	client := runningBackend(t, p.dir)
+	startupReply(t, client, "help")
+	var rows []Plugin
+	if err := json.Unmarshal(startupReply(t, client, "plugins"), &rows); err != nil || len(rows) != 2 || rows[0].State != "starting" || rows[1].State != "starting" {
+		t.Fatalf("startup status: %+v, %v", rows, err)
+	}
+	pageCtx, cancelPage := context.WithTimeout(t.Context(), 300*time.Millisecond)
+	req, _ := http.NewRequestWithContext(pageCtx, http.MethodGet, "http://"+client.Address+"/", nil)
+	response, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal("page did not answer during startup:", err)
+	}
+	io.Copy(io.Discard, response.Body)
+	response.Body.Close()
+	cancelPage()
+	if response.StatusCode != http.StatusOK {
+		t.Fatal(response.Status)
+	}
+	cancelled, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	err = client.Call(cancelled, "run", []any{"first.probe", Values{"mode": "echo", "value": "must not run"}, ""}, func(json.RawMessage) error { return nil })
+	cancel()
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("request did not cancel its startup wait: %v", err)
+	}
+	ctx, stop := context.WithTimeout(t.Context(), 10*time.Second)
+	defer stop()
+	type acknowledged struct {
+		id  string
+		err error
+	}
+	ack := make(chan acknowledged, 1)
+	go func() {
+		var id string
+		err := client.Call(ctx, "run", []any{"first.probe", Values{"mode": "echo", "value": "ready"}, ""}, func(data json.RawMessage) error { return json.Unmarshal(data, &id) })
+		ack <- acknowledged{id, err}
+	}()
+	select {
+	case value := <-ack:
+		t.Fatalf("run did not wait for the complete catalog: %+v", value)
+	case <-time.After(100 * time.Millisecond):
+	}
+	var value acknowledged
+	select {
+	case value = <-ack:
+	case <-ctx.Done():
+		t.Fatal("run stayed blocked after startup")
+	}
+	if value.err != nil {
+		t.Fatal(value.err)
+	}
+	run := finishProcessRun(t, client, value.id)
+	if run.State != "done" || run.Outputs["text"] != "ready" {
+		t.Fatalf("run after startup: %+v", run)
+	}
+	runs, err := p.Runs()
+	if err != nil || len(runs) != 1 {
+		t.Fatalf("cancelled request was accepted later: %+v, %v", runs, err)
+	}
+	latestStart, earliestDescription := float64(0), float64(1e20)
+	for _, name := range []string{"first", "second"} {
+		var started struct {
+			At float64
+		}
+		data, _ := os.ReadFile(filepath.Join(p.pluginDir(name), "started"))
+		if err := json.Unmarshal(data, &started); err != nil {
+			t.Fatal(err)
+		}
+		var described float64
+		data, _ = os.ReadFile(filepath.Join(p.pluginDir(name), "described"))
+		if err := json.Unmarshal(data, &described); err != nil {
+			t.Fatal(err)
+		}
+		latestStart, earliestDescription = max(latestStart, started.At), min(earliestDescription, described)
+	}
+	if latestStart >= earliestDescription {
+		t.Fatal("plugin startup was sequential")
+	}
+}
+
+func TestBackendStopDuringInitialization(t *testing.T) {
+	p := startupProject(t, 3, 3)
+	client, stop := startBackend(t, p.dir)
+	startupReply(t, client, "help")
+	for _, name := range []string{"first", "second"} {
+		waitProcess(t, func() bool { _, err := os.Stat(filepath.Join(p.pluginDir(name), "started")); return err == nil })
+	}
+	pids := []int{processPID(t, p.pluginDir("first")), processPID(t, p.pluginDir("second"))}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	if err := client.Call(ctx, "stop", nil, func(json.RawMessage) error { return nil }); err != nil {
+		t.Fatal("stop did not promptly cancel initialization:", err)
+	}
+	stop()
+	for _, pid := range pids {
+		if pid == 0 || syscall.Kill(pid, 0) == nil {
+			t.Fatalf("plugin process survived stop: %d", pid)
+		}
+	}
+	if _, err := os.Stat(backendFile(p.dir)); !os.IsNotExist(err) {
+		t.Fatal("stop left the backend credential")
+	}
+}
+
+func TestBackendStartupDefersTriggers(t *testing.T) {
+	interval := folderInterval
+	folderInterval = 10 * time.Millisecond
+	t.Cleanup(func() { folderInterval = interval })
+	p := startupProject(t, 0, 3)
+	flow := triggerFlow("folder.new_file", Values{"path": "in"}, "first.probe", Values{"mode": "echo", "value": "=event.name"})
+	data, _ := json.Marshal(flow)
+	writeFiles(t, p.dir, map[string]string{
+		"in/old": "old", "triggers/folder.new_file-1.flow": string(data), ".inode/triggers.json": `{"folder.new_file-1":true}`,
+	})
+	client := runningBackend(t, p.dir)
+	waitProcess(t, func() bool {
+		var rows []Plugin
+		json.Unmarshal(startupReply(t, client, "plugins"), &rows)
+		return len(rows) == 2 && rows[0].State == "running" && rows[1].State == "starting"
+	})
+	writeFiles(t, p.dir, map[string]string{"in/during-startup": "early"})
+	time.Sleep(100 * time.Millisecond)
+	if runs, err := p.Runs(); err != nil || len(runs) != 0 {
+		t.Fatalf("an event was handled before the catalog was complete: %+v, %v", runs, err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	if err := client.Call(ctx, "nodes", nil, func(json.RawMessage) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	writeFiles(t, p.dir, map[string]string{"in/one": "new"})
+	row := waitTrigger(t, client, "folder.new_file-1", func(row Trigger) bool { return row.Last != nil })
+	if row.State != "on" || row.Error != "" || row.Last.State != "done" || row.Last.Outputs["text"] != "one" {
+		t.Fatalf("persisted trigger did not start after initialization: %+v", row)
+	}
+	time.Sleep(3 * folderInterval)
+	request(t, client, "trigger off", "folder.new_file-1")
+	if runs, err := p.Runs(); err != nil || len(runs) != 1 {
+		t.Fatalf("trigger was activated more than once or emitted old files: %+v, %v", runs, err)
+	}
+}
+
+func TestBackendInitializationError(t *testing.T) {
+	p := fileProject(t, map[string]string{".inode/triggers.json": "["})
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	if err := Serve(ctx, p.dir); err == nil || !strings.Contains(err.Error(), "triggers.json") {
+		t.Fatalf("initialization error was lost: %v", err)
+	}
+	if _, err := os.Stat(backendFile(p.dir)); !os.IsNotExist(err) {
+		t.Fatal("initialization failure left the credential file")
 	}
 }
 

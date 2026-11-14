@@ -25,7 +25,7 @@ Two supporting words are not concepts of their own. A **step** is a node placed 
 
 ## Node
 
-A node has a name (`plugin.name`), a one-sentence description, named typed inputs (each required or with a default), and named typed outputs. When run, it receives all its inputs and either returns all its outputs or fails.
+A node has a name (`plugin.name`), a one-sentence description, named typed inputs (each required, optional or with a default), and named typed outputs. It receives filled inputs and returns every output or fails.
 
 - **No separate configuration.** An input is filled with a value you write or with a reference to another output. A node with some inputs filled in is still a node, with fewer open inputs.
 - **Fixed ports.** Inputs and outputs never change with the values given. A capability with several modes becomes several nodes. Data whose shape is only known at run time (query rows, spreadsheet columns) travels inside one `object` or `list` port.
@@ -44,11 +44,11 @@ Types are names, checked when connecting:
 
 - A capital letter in a description (`T`, `U`) stands for "the same type wherever this letter appears" in that one use of the node.
 - Where a type is `any` or an unstated `object`, the connection is allowed and shown as unchecked. The value is checked against what the consumer expects before the consumer starts, and a node's outputs are checked against its description when it returns.
-- Secret names and handles can be passed through workflows, boxes and control nodes as opaque references. A secret is turned into its real value only when the core calls a node that is not a workflow and declares a `secret` input; a control node that merely passes one along sees only the name. A secret named in a workflow but not stored is reported as a problem before anything runs. Records show secret inputs by name. If the node's outputs or error contain the value exactly, it is replaced by the name before anything is recorded or passed on; an encoded or transformed copy is not recognised, and a plugin is trusted code that can still send the value elsewhere.
+- Secret names and handles pass through workflows, boxes and control nodes as opaque references. The core resolves a secret for a non-workflow node's `secret` input or an explicit plugin launch binding; a control node sees only the name. Missing secrets are reported before the node or process starts. Records show input names. Exact secret values in outputs, errors or process diagnostics are replaced before display/recording; encoded or transformed copies are not recognised. Plugins are trusted code and can send values elsewhere.
 
 ## Workflow
 
-A workflow is a node made of steps. Each step's inputs are filled by values or by references to other steps (`=page.body`, with dotted paths into data such as `=resp.json.user.name`, where a number picks a list item: `=feed.items.0.title`). `=inputs.url` refers to the workflow's own input. A reference can also sit inside a written list or object. A text that really starts with `=` is written with `==`. Step and port names contain no dots. Any input can be **exposed** as an input of the workflow, and any output as an output of the workflow, which is what makes the workflow a node.
+A workflow is a node made of steps, with required or defaulted inputs. Each step's inputs are filled by values or by references to other steps (`=page.body`, with dotted paths into data such as `=resp.json.user.name`, where a number picks a list item: `=feed.items.0.title`). `=inputs.url` refers to the workflow's own input. A reference can also sit inside a written list or object. A text that really starts with `=` is written with `==`. Step and port names contain no dots. Any input can be **exposed** as an input of the workflow, and any output as an output of the workflow, which is what makes the workflow a node.
 
 **A node in a `node` input is not a step.** It does not run by itself; the receiving step calls it. In the frontend the input is a box. A box holds a saved node or steps built directly inside it (an inline workflow, the same thing without a file name). Anything inside the box runs when the box's owner calls it.
 
@@ -91,26 +91,27 @@ Each event starts its own ordinary run. The behaviour is fixed and the same for 
 - An accepted event is a run from that moment: it is stored as a run that is waiting, and the waiting runs of a trigger are its queue. After a restart, a run that had not started still runs once; a run that had started is marked interrupted and is not started again. Events may arrive twice. What happens before acceptance depends on where the event comes from.
 - Switching a trigger off stops new events, lets the current run finish, and keeps waiting events for when it is switched on again. The user can clear them.
 
-Trigger definitions are plain files beside the workflows. Whether a trigger is on is remembered per machine and starts as off in a copied project. Triggers that are on are active whenever the backend is running.
+Trigger definitions are plain files beside the workflows. Whether a trigger is on is remembered per machine and starts as off in a copied project. Enabled triggers start when the backend's catalog is ready.
 
 ## Using it
 
-One backend runs per project folder. The browser frontend and the command line are two clients of it with the same capabilities and the same checks.
+One backend runs per project folder. Browser and command line share capabilities and checks; page, help, stop and plugin status answer during startup, while other work waits for the catalog.
 
 - The frontend is the main way to build. It is generated from node descriptions, so plugins ship no frontend code. An input becomes a field (including file paths), a secret picker, a socket, or a box, by its type.
 - The command line runs nodes, shows runs, and manages triggers and plugins. Workflows are short text files that can be read and edited by hand; that is the advanced route.
-- A command that needs the project connects to its backend and starts it if none is running. A backend started this way keeps running and says so, including that switched-on triggers are now active. `inode stop` stops it.
+- A command that needs the project connects to its backend and starts it if none is running. The backend keeps running and says when switched-on triggers start. `inode stop` stops it.
 
 ## Plugins
 
-A plugin is a folder with a manifest (name, version, a description, what it says it accesses, and an optional setup command that prepares its own environment) and nodes. The contract:
+A plugin is a folder with a `plugin` manifest (`name`, `version`, `doc`, `accesses`, optional `setup`) and `.node` files. Optional `process` uses the same string/list argument rule as `setup`, without a shell; `env: {API_KEY: stored_key}` binds environment variables to secret names, shown before installation. Its working folder is the installed plugin folder; its environment contains PATH/HOME/TMPDIR/LANG plus these bindings.
 
-- **describe** returns the descriptions of its nodes and trigger kinds.
-- **run(node, inputs)** returns outputs or an error, with optional progress messages for display.
-- **Requests to the core** while running: call a node it was given, read or write a file, read or store its own secrets and small state.
-- **For a trigger kind:** activate a trigger with its settings, submit events, deactivate it. Events carry only plain data and files.
+Processes start on installation and together on backend startup; each shows `starting` until it describes its nodes or fails. They run until removal/replacement/shutdown: close stdin, wait briefly, then end the process group. Nodes join `.node` files as `plugin.node`. Requests and replies use stdin/stdout, one JSON object per line (replies up to 1 MiB), with string ids; stderr is bounded diagnostics. Only three messages:
 
-A node can be a description file plus a program (see "Writing a node"). Plugins that keep models loaded or call other nodes run as a long-lived process and must accept new runs while waiting on a call.
+- **describe:** `{"id":"1","method":"describe"}` → `{"id":"1","nodes":{"next":{"doc":"Advance counter.","inputs":{},"outputs":{"count":"number"}}}}`. Node descriptions use the usual ports and optional `no_outside_effect`, without `run`.
+- **run:** `{"id":"2","method":"run","node":"next","inputs":{},"dir":"/project/.inode/work/plugin-xyz"}` → `{"id":"2","outputs":{"count":1}}`, or `{"id":"2","error":"what went wrong"}`. Files must be closed before replying: a declared file leaf may be an absolute path inside `dir`; the host imports it before checking/publishing outputs, then removes `dir`. Existing stored references also work.
+- **cancel:** `{"id":"2","method":"cancel"}` asks the producer to stop that run. Reply once to the original run after work stops, for example `{"id":"2","error":"cancelled"}`; no separate cancel reply. The host retains `dir` until that reply or process exit and discards late outputs. Cancellation cannot undo outside actions.
+
+Keep reading while runs execute: replies may arrive out of order and ids identify their runs. Exit/unreadable stdout fails pending runs, warns they may or may not have finished, marks the process unavailable and makes checks report the reason on `use`; add the plugin again to recover. There is no automatic replay. Plugin-to-core requests, child calls, state, live objects and plugin triggers are not built yet.
 
 - **Discover:** an index that is only a list of names and URLs; no hosted service is required.
 - **Install:** always an explicit action, from a name, a git URL or a local path, after showing what the plugin says it accesses. A plugin is trusted code; nothing is enforced. Adding a plugin again replaces it. Each plugin gets its own process and environment, so plugins cannot break each other's dependencies.
@@ -119,8 +120,8 @@ A node can be a description file plus a program (see "Writing a node"). Plugins 
 **Adapters**, in order of value:
 
 1. **Command-line tools.** Ordinary `.node` descriptions bind arguments, flags, stdin, stdout and environment without a shell. File bindings follow with the managed file store; wrapping ffmpeg or pandoc then needs only a description.
-2. **MCP servers.** Each tool becomes a node. Tools without an output schema return one `result` object. Tools that ask for more input mid-call are not supported.
-3. **OpenAPI.** Each operation becomes a node. This gives API calls, not finished integrations; paging, polling and sign-in are built on top as workflows.
+2. **MCP servers.** Paste a server command into Plugins, edit the name and secret bindings, then confirm the ordinary plugin that runs `inode mcp -- <server command>`. Each tool becomes a node with conservative schema-derived ports and `result: {response, files}` (text/structured data and stored media); Add again rediscovers tools.
+3. **OpenAPI.** Paste an OpenAPI 3 document's file or URL into Plugins, edit the name, base URL and secret bindings, then confirm the ordinary plugin that runs `inode openapi -- <document> <base URL>`. Each operation becomes a node with schema-derived ports and `result: {status, body, files}`; these are API calls, not finished integrations, so paging, polling and sign-in are built on top as workflows.
 4. **Library functions.** Signature to ports, as scaffolding for functions that already fit.
 5. **ComfyUI.** One node submits a whole graph to a running ComfyUI server and returns its output files. Hosting individual ComfyUI nodes is not planned.
 6. **n8n nodes.** Not adapted; they depend on n8n's item runtime and credentials. The same services are reached through OpenAPI or MCP.
@@ -168,7 +169,7 @@ outputs: {ok: =sent.ok}
 
 ## Writing a node
 
-A `.node` file describes a program as a node. In `nodes/<name>.node`, declare `doc`, inputs, outputs, optional `no_outside_effect` and `run`. Programs run without a shell. `run` accepts space-separated words, an argument list, or `{args: [...]}`; quoting/shell characters require a list.
+A `.node` file describes a program as a node. In `nodes/<name>.node`, declare `doc`, inputs, outputs, optional `no_outside_effect` and `run`. Programs run without a shell. `run` accepts quoted words with `~/` expansion, an argument list, or `{args: [...]}`; shell operations are refused and literal shell characters require quoting or a list.
 
 | Binding | What it does |
 |---|---|
@@ -179,7 +180,7 @@ A `.node` file describes a program as a node. In `nodes/<name>.node`, declare `d
 | `env: {TOKEN: =inputs.token}` | Scalars; secrets only here or stdin. |
 | `files: {in.md: =inputs.source, out.html: =outputs.html}` | Stage/collect files under relative names used in args; one producer per output. |
 
-Without bindings, streams carry JSON objects of all inputs/outputs. File bindings leave JSON stdout for remaining outputs, or unused when none remain. `files` selects a fresh private folder, removed afterwards; otherwise programs run in the description folder. Bad bindings fail at load; nonzero exit fails with bounded scrubbed stderr. Plugin `setup` uses the same string/list rule. `file.save(file, path)` copies a result to disk; text `file.read`/`file.write` stay unchanged. File inputs and file.save paths accept `~/` or start at the project folder. See [file forms](tutorial.md#the-two-file-forms).
+Without bindings, streams carry JSON objects of all inputs/outputs. File bindings leave JSON stdout for remaining outputs, or unused when none remain. `files` selects a fresh private folder, removed afterwards; otherwise programs run in the description folder. Bindings of unset inputs are omitted; bad bindings fail at load; nonzero exit fails with bounded scrubbed stderr. Plugin `setup` uses the same string/list rule. `file.save(file, path)` copies a result to disk; text `file.read`/`file.write` stay unchanged. File inputs and file.save paths accept `~/` or start at the project folder. See [file forms](tutorial.md#the-two-file-forms).
 
 ## Limits
 
@@ -201,6 +202,8 @@ These are deliberate. Each keeps the model small.
 | Coordinating state shared between workflows | Only runs of one trigger are kept from overlapping. Plugins that keep state guard it themselves. |
 | Formulas inside references | References select data by path only; computation is a node. |
 | Enforced limits on what a plugin can do | Plugins are trusted code; install only what you trust. |
+| Full MCP conformance | Stdio, 2026-07-28, and earlier revisions for tools only; schemas are projected to iNode types without full validation, which MCP requires clients to perform. No HTTP, input rounds, sampling, roots, resource operations, prompts/completion, tasks, Apps or push catalog updates. File arguments use the server's JSON contract; inline wire frames are buffered and limited to 8 MiB. |
+| Full OpenAPI coverage | OpenAPI 3 documents up to 8 MiB with local `$ref`s; inputs are not validated against the schema. JSON request bodies only; JSON and text responses up to 8 MiB are data, other content becomes files, a status of 400 or above fails the run, and response headers are not returned. Only GET and HEAD are marked as having no outside effect. Credentials are http bearer/basic and header/query API keys, each read from the variable named after its security scheme; no OAuth flows, cookies or mutual TLS. |
 | Managing iNode from another machine | The backend serves the local machine only. |
 | Automatic removal of stored files | Archive/move whole projects including `.inode/`, or remove unneeded projects. Deleting blobs breaks run records. |
 | Importing n8n or ComfyUI workflow files | Adapters reuse their capabilities, not their formats. |

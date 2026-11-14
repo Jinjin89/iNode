@@ -123,16 +123,24 @@ func (c *checker) compile(step *Step, location string, tree Values, path valuePa
 			defer delete(c.active, name)
 		}
 	}
-	if problem != nil {
-		c.error(location, "use", problem)
+	for name, port := range node.Outputs {
+		if port.Optional {
+			problem = Problem{Input: "outputs." + name, Message: "outputs always need a value; remove optional"}
+		}
 	}
 	p := &plan{Node: node, deps: map[string]map[string]bool{}}
 	p.Inputs = Ports{}
 	for name, port := range node.Inputs {
+		if node.Workflow != nil && port.Optional {
+			problem = Problem{Input: name, Message: "workflow inputs need a value or a default; remove optional"}
+		}
 		if port.Default != nil {
 			port.Default = c.expression(port.Default, port.Type, location, valuePath{name}, nil)
 		}
 		p.Inputs[name] = port
+	}
+	if problem != nil {
+		c.error(location, "use", problem)
 	}
 	parsed, supplied := Values{}, Values{}
 	var refs []Reference
@@ -200,7 +208,7 @@ func (c *checker) compile(step *Step, location string, tree Values, path valuePa
 	for _, input := range keys(p.Inputs) {
 		want := p.Inputs[input].Type
 		value, exists := bound.Values[input]
-		if !exists {
+		if !exists && p.Inputs[input].required() {
 			value = want
 		}
 		if effect := outsideEffect(value, want); p.effect == "" {
@@ -392,6 +400,9 @@ func bind(ports Ports, supplied Values, step, prefix string, types map[string]Ty
 		value, exists := bound.Values[input]
 		if !exists && port.Default != nil {
 			value, exists = port.Default, true
+		}
+		if !exists && !port.required() {
+			continue
 		}
 		if !exists {
 			bound.Open[input] = port

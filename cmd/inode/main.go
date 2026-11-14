@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -21,7 +22,7 @@ import (
 	"inode"
 )
 
-const usage = "usage: inode run <node> key=value ... | nodes | show <node> | check <workflow or JSON> | save <workflow> <version> <JSON> | runs [show|stop|follow|again <id>] | runs from <id> <step> [--start] | trigger add <kind> key=value ... run=<node> key=value ... | trigger list/on/off/remove/clear [name] | secret set <name> (prompt or stdin; one trailing line ending removed) | secret list | secret remove <name> | add <path or git URL> | remove <plugin> | plugins [inspect <path or git URL>] | start | stop | help | version"
+const usage = "usage: inode run <node> key=value ... | nodes | show <node> | check <workflow or JSON> | save <workflow> <version> <JSON> | runs [show|stop|follow|again <id>] | runs from <id> <step> [--start] | trigger add <kind> key=value ... run=<node> key=value ... | trigger list/on/off/remove/clear [name] | secret set <name> (prompt or stdin; one trailing line ending removed) | secret list | secret remove <name> | add <plugin source> | remove <plugin> | plugins [inspect <plugin source>] | start | stop | help | version"
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -35,6 +36,9 @@ func main() {
 func command(ctx context.Context, args []string, out, diagnostic io.Writer) error {
 	if len(args) == 0 {
 		return fmt.Errorf("%s", usage)
+	}
+	if program := adapterPrograms[args[0]]; program != nil && len(args) > 1 && args[1] == "--" {
+		return program(ctx, args[2:], os.Stdin, out, diagnostic)
 	}
 	if len(args) == 1 {
 		switch args[0] {
@@ -91,7 +95,7 @@ func command(ctx context.Context, args []string, out, diagnostic io.Writer) erro
 		return err
 	}
 	if started {
-		fmt.Fprintln(diagnostic, "started backend for this project; switched-on triggers are active; use inode stop to stop it")
+		fmt.Fprintln(diagnostic, "started backend for this project; switched-on triggers start when plugins are ready; use inode stop to stop it")
 	}
 	if operation == "start" {
 		url := "http://" + client.Address + "/#" + client.Credential
@@ -134,11 +138,18 @@ func command(ctx context.Context, args []string, out, diagnostic io.Writer) erro
 		}
 		arguments = append(arguments, secret)
 	}
+	if operation == "add" {
+		source, err := confirmPlugin(ctx, client, arguments[0], out, diagnostic)
+		if err != nil || source == nil {
+			return err
+		}
+		arguments[0] = source
+	}
 	err = client.Call(ctx, operation, arguments, func(data json.RawMessage) error {
 		columns := map[string][]func(any) any{
 			"nodes":        {field("name"), field("doc")},
 			"runs":         {field("id"), field("node"), field("state"), startedBy},
-			"plugins":      {field("name"), field("version"), field("state"), field("source")},
+			"plugins":      {field("name"), field("version"), field("state"), field("source"), field("error")},
 			"trigger list": {field("name"), triggerInstruction, field("state"), runField("current"), field("waiting"), runField("last"), runField("last_failure"), field("error")},
 			"secret list":  {func(row any) any { return row }},
 		}[operation]
@@ -199,6 +210,94 @@ func command(ctx context.Context, args []string, out, diagnostic io.Writer) erro
 		_, err = fmt.Fprintln(out, "backend stopped")
 	}
 	return err
+}
+
+func confirmPlugin(ctx context.Context, client *inode.Client, source any, out, diagnostic io.Writer) (any, error) {
+	reader := bufio.NewScanner(os.Stdin)
+	ask := func(label string, value any) string {
+		if value != nil {
+			label += fmt.Sprintf(" [%v]", value)
+		}
+		fmt.Fprint(diagnostic, label+": ")
+		if !reader.Scan() {
+			return ""
+		}
+		if reader.Text() == "" && value != nil {
+			return fmt.Sprint(value)
+		}
+		return strings.TrimSpace(reader.Text())
+	}
+	answered := map[string]bool{}
+	for {
+		var plugin inode.Plugin
+		if err := client.Call(ctx, "plugins inspect", []any{source}, func(data json.RawMessage) error { return json.Unmarshal(data, &plugin) }); err != nil {
+			return nil, err
+		}
+		prepared := plugin.Preparation
+		if prepared == nil {
+			break
+		}
+		if plugin.Error != "" {
+			return nil, fmt.Errorf("%s", plugin.Error)
+		}
+		fields := slices.DeleteFunc(slices.Clone(prepared.Editable), func(field inode.Editable) bool { return answered[field.Name] })
+		if len(fields) == 0 {
+			fmt.Fprintln(out, "Program:", inode.CommandText(plugin.Process.([]any)), "\nWorking folder:", prepared.WorkingDir)
+			data, _ := json.MarshalIndent(prepared.Manifest, "", "  ")
+			fmt.Fprintln(out, string(data))
+			if answer := ask("Install plugin? [y/N]", nil); answer != "y" && answer != "yes" {
+				return nil, reader.Err()
+			}
+			break
+		}
+		request := maps.Clone(prepared.Input)
+		for _, field := range fields {
+			answered[field.Name] = true
+			switch field.Kind {
+			case "bindings":
+				var names []string
+				if err := client.Call(ctx, "secret list", nil, func(data json.RawMessage) error { return json.Unmarshal(data, &names) }); err != nil {
+					return nil, err
+				}
+				fmt.Fprintln(diagnostic, "Stored secrets:", strings.Join(names, ", "))
+				bindings, _ := field.Value.(map[string]any)
+				if bindings == nil {
+					bindings = map[string]any{}
+				}
+				suggested := slices.DeleteFunc(slices.Sorted(maps.Keys(bindings)), func(key string) bool { return bindings[key] != "" })
+				for {
+					var key string
+					if len(suggested) > 0 {
+						key, suggested = suggested[0], suggested[1:]
+					} else if key = ask(field.Label+" — variable name (blank to finish)", nil); key == "" {
+						break
+					}
+					name := ask("Stored secret name for "+key+" (blank to leave unset)", nil)
+					if delete(bindings, key); name == "" {
+						continue
+					}
+					if !slices.Contains(names, name) {
+						return nil, fmt.Errorf("store secret %q first with inode secret set", name)
+					}
+					bindings[key] = name
+				}
+				request[field.Name] = bindings
+			default:
+				for _, key := range slices.Sorted(maps.Keys(field.Choices)) {
+					fmt.Fprintf(diagnostic, "%s: %s\n", key, field.Choices[key])
+				}
+				value := ask(field.Label, field.Value)
+				if value != "" {
+					request[field.Name] = value
+				}
+				if len(field.Choices) > 0 && field.Choices[value] == "" {
+					return nil, fmt.Errorf("choose one of the listed values for %s", field.Label)
+				}
+			}
+		}
+		source = request
+	}
+	return source, nil
 }
 
 func field(name string) func(any) any {

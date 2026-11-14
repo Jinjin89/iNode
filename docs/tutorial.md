@@ -8,7 +8,7 @@ Connect nodes into a **workflow**. Save that workflow and it becomes a node too,
 - A **run** is cooking the recipe once. iNode keeps what went in and came out of every step, so you can look afterwards.
 - A **trigger** is like an alarm clock. It says, “When this happens, run that.”
 
-A **step** is one use of a node in a workflow.
+A **step** is one use of a node in a workflow. An input marked optional may be left empty.
 
 A **box** is a slot on a step that holds another node for that step to call; a node in a box never runs by itself.
 
@@ -114,7 +114,7 @@ The workflow now gives back only the first greeting.
 - Read what the plugin says it accesses.
 - Click **Install plugin** to confirm.
 
-Its nodes appear in the node list. Any program that reads and prints JSON (named values written as text) can be a node. Enter a path for a file input; use `file.save` to copy a returned file where you want it.
+Its nodes appear in the node list. An MCP server's command or an OpenAPI document's address pasted here is a plugin too, with its tools or operations as ordinary nodes. Any program that reads and prints JSON (named values written as text) can be a node. Enter a path for a file input; use `file.save` to copy a returned file where you want it.
 
 ## The same from the command line
 ```sh

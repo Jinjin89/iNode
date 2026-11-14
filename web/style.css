@@ -286,8 +286,8 @@ nav { display: flex; gap: var(--space-2); }
 .form-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); margin-bottom: var(--space-4); }
 .form-heading h2 { margin: 0; }
 .screen-form .row { align-items: end; flex-wrap: wrap; }
-.screen-form .row > label { flex: 1; min-width: 180px; }
-.screen-form input:not([type=checkbox]) { width: 100%; margin-top: var(--space-2); }
+.screen-form .row > label { flex: 1; min-width: 180px; align-self: stretch; }
+.screen-form input:not([type=checkbox]), .screen-form label > .field { width: 100%; margin-top: var(--space-2); }
 .screen-form > .problem { margin-bottom: 0; }
 .trigger-steps { display: flex; gap: var(--space-5); margin-bottom: var(--space-4); }
 .trigger-steps > section { flex: 1; min-width: 0; padding: var(--space-4); background: var(--surface-soft); border: 0; border-radius: var(--radius); }
@@ -316,6 +316,8 @@ dialog::backdrop { background: var(--backdrop); }
 .run-inputs label > input { display: block; width: 100%; margin-top: var(--space-2); }
 .run-inputs .port { padding: var(--space-2) 0; }
 .run-inputs .row { justify-content: flex-end; margin-top: var(--space-5); }
+.run-inputs.screen-form { width: 640px; margin: auto; }
+.run-inputs.screen-form .row { margin-top: var(--space-3); }
 @media (max-width: 1200px) { .node-entry { flex-direction: column; } .node-list .node-add { width: 100%; } .node-list .node-open { align-self: flex-end; margin: 0 var(--space-2) var(--space-2); } .catalog { width: 180px; flex-basis: 180px; } .brand span { display: none; } .inspector { flex-basis: 270px; } .toolbar { flex-wrap: wrap; } .app-header { gap: var(--space-5); padding: 0 var(--space-4); } .guide { flex-basis: 300px; } th, td { padding: var(--space-3); } .trigger-steps { flex-wrap: wrap; } .trigger-steps > section { flex-basis: 240px; } }
 
 .react-flow { --xy-background-color: var(--canvas); --xy-background-pattern-dots-color-default: var(--grid); --xy-controls-button-background-color: var(--surface); --xy-controls-button-background-color-hover: var(--surface-hover); --xy-controls-button-border-color: var(--border); }

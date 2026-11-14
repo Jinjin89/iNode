@@ -9,12 +9,12 @@ import (
 )
 
 type operation struct {
-	call  any
-	write bool
+	call         any
+	write, early bool
 }
 
 var Operations = map[string]operation{
-	"help":  {call: Help},
+	"help":  {call: Help, early: true},
 	"nodes": {call: (*Project).Nodes},
 	"show":  {call: (*Project).Describe},
 	"check": {call: (*Project).Check},
@@ -30,12 +30,12 @@ var Operations = map[string]operation{
 	"runs follow":     {call: (*backend).followRun},
 	"add":             {call: (*Project).Add, write: true},
 	"remove":          {call: (*Project).Remove, write: true},
-	"plugins":         {call: (*Project).Plugins},
+	"plugins":         {call: (*backend).plugins, early: true},
 	"plugins inspect": {call: (*Project).InspectPlugin},
 	"secret set":      {call: (*Project).SetSecret, write: true},
 	"secret list":     {call: (*Project).SecretNames},
 	"secret remove":   {call: (*Project).RemoveSecret, write: true},
-	"stop":            {call: (*backend).stop},
+	"stop":            {call: (*backend).stop, early: true},
 	"trigger add":     {call: (*backend).addTrigger, write: true},
 	"trigger list":    {call: (*backend).triggerList},
 	"trigger on":      {call: func(b *backend, p *Project, name string) error { return b.setTrigger(p, name, true) }},

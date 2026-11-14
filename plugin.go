@@ -2,6 +2,7 @@ package inode
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -12,28 +13,50 @@ import (
 )
 
 type Plugin struct {
-	Name     string   `json:"name" yaml:"name"`
-	Version  string   `json:"version" yaml:"version"`
-	Source   string   `json:"source,omitempty" yaml:"source,omitempty"`
-	Doc      string   `json:"doc,omitempty" yaml:"doc,omitempty"`
-	Accesses []string `json:"accesses,omitempty" yaml:"accesses,omitempty"`
-	Setup    any      `json:"setup,omitempty" yaml:"setup,omitempty"`
-	State    string   `json:"state,omitempty" yaml:"-"`
+	Name        string            `json:"name" yaml:"name"`
+	Version     string            `json:"version" yaml:"version"`
+	Source      string            `json:"source,omitempty" yaml:"source,omitempty"`
+	Doc         string            `json:"doc,omitempty" yaml:"doc,omitempty"`
+	Accesses    []string          `json:"accesses,omitempty" yaml:"accesses,omitempty"`
+	Setup       any               `json:"setup,omitempty" yaml:"setup,omitempty"`
+	Process     any               `json:"process,omitempty" yaml:"process,omitempty"`
+	Env         map[string]string `json:"env,omitempty" yaml:"env,omitempty"`
+	State       string            `json:"state,omitempty" yaml:"-"`
+	Error       string            `json:"error,omitempty" yaml:"-"`
+	Preparation *Prepared         `json:"preparation,omitempty" yaml:"-"`
 }
 
-func (plugin Plugin) validate() error {
+func (plugin *Plugin) validate() error {
 	if !portName(plugin.Name) || !filepath.IsLocal(plugin.Name) || filepath.Base(plugin.Name) != plugin.Name {
 		return fmt.Errorf("rename plugin %q to a nonempty name without dots, equals signs or path separators", plugin.Name)
 	}
 	if plugin.Version == "" {
 		return fmt.Errorf("plugin %q: supply a version", plugin.Name)
 	}
-	if plugin.Setup != nil {
-		args, err := argumentList(plugin.Setup, "setup")
-		if err == nil {
-			_, err = arguments(args, nil, "setup", true)
+	for _, key := range []string{"setup", "process"} {
+		value := plugin.Setup
+		if key == "process" {
+			value = plugin.Process
 		}
-		return err
+		if value == nil {
+			continue
+		}
+		args, err := argumentList(value, key)
+		if err == nil {
+			_, err = arguments(args, nil, key, true)
+		}
+		if err != nil {
+			return err
+		}
+		if key == "process" {
+			argv, _ := arguments(args, nil, key, false)
+			plugin.Process, _ = jsonData[any](argv)
+		}
+	}
+	for name, secret := range plugin.Env {
+		if plugin.Process == nil || name == "" || strings.ContainsAny(name, "=\x00") || secret == "" || !filepath.IsLocal(secret) || filepath.Base(secret) != secret {
+			return fmt.Errorf("env.%s: bind an environment variable to a stored secret name for process", name)
+		}
 	}
 	return nil
 }
@@ -42,36 +65,43 @@ func (p *Project) pluginDir(name string) string {
 	return filepath.Join(p.dir, ".inode", "plugins", name)
 }
 
-func (p *Project) loadPlugins() error {
-	p.plugins = []Plugin{}
-	err := readYAML(filepath.Join(p.dir, "plugins"), &p.plugins)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		return err
+func readPlugins(dir string) ([]Plugin, error) {
+	plugins := []Plugin{}
+	if err := readYAML(filepath.Join(dir, "plugins"), &plugins); err != nil && !os.IsNotExist(err) {
+		return nil, err
 	}
 	seen := map[string]bool{}
-	for i, plugin := range p.plugins {
+	for i, plugin := range plugins {
 		if err := plugin.validate(); err != nil {
-			return err
+			return nil, err
 		}
 		if plugin.Source == "" || seen[plugin.Name] {
-			return fmt.Errorf("plugins: list %q once, with its source", plugin.Name)
+			return nil, fmt.Errorf("plugins: list %q once, with its source", plugin.Name)
 		}
 		seen[plugin.Name] = true
 		var installed Plugin
-		err := readYAML(filepath.Join(p.pluginDir(plugin.Name), "plugin"), &installed)
-		p.plugins[i].State = "missing"
+		err := readYAML(filepath.Join(dir, ".inode", "plugins", plugin.Name, "plugin"), &installed)
+		plugins[i].State = "missing"
 		if err == nil && installed.Name == plugin.Name && installed.Version == plugin.Version {
-			p.plugins[i].State = "installed"
-			p.plugins[i].Doc, p.plugins[i].Accesses = installed.Doc, installed.Accesses
-			if err := p.loadNodes(filepath.Join(p.pluginDir(plugin.Name), "nodes"), plugin.Name+"."); err != nil {
-				return err
+			if err := installed.validate(); err != nil {
+				plugins[i].State, plugins[i].Error = "unavailable", fmt.Sprintf("Plugin %q is unavailable (%v). Add the plugin again.", plugin.Name, err)
+				continue
 			}
+			installed.Source, installed.State = plugin.Source, "installed"
+			plugins[i] = installed
 		}
 	}
-	return nil
+	return plugins, nil
+}
+
+func (b *backend) plugins() ([]Plugin, error) {
+	plugins, err := readPlugins(b.dir)
+	for i, plugin := range plugins {
+		if plugin.State == "installed" && plugin.Process != nil {
+			plugins[i].State, plugins[i].Error = b.host.state(plugin.Name)
+		}
+	}
+	return plugins, err
 }
 
 func (p *Project) lookup(name string) Node {
@@ -79,6 +109,9 @@ func (p *Project) lookup(name string) Node {
 		return node
 	}
 	for _, plugin := range p.plugins {
+		if plugin.State == "unavailable" && strings.HasPrefix(name, plugin.Name+".") {
+			return Node{Name: name, problem: fmt.Errorf("%s", plugin.Error)}
+		}
 		if plugin.State == "missing" && strings.HasPrefix(name, plugin.Name+".") {
 			return Node{Name: name, problem: fmt.Errorf("plugin %q version %s is listed but not installed; run inode add %s",
 				plugin.Name, plugin.Version, plugin.Source)}
@@ -137,16 +170,50 @@ func (p *Project) fetchPlugin(ctx context.Context, source string) (Plugin, strin
 	return plugin, stage, err
 }
 
-func (p *Project) InspectPlugin(ctx context.Context, source string) (Plugin, error) {
-	plugin, stage, err := p.fetchPlugin(ctx, source)
+func (p *Project) preparePlugin(ctx context.Context, source any, install bool) (Plugin, string, error) {
+	prepared, err := prepareSource(p.dir, source)
+	if err != nil {
+		return Plugin{}, "", err
+	}
+	if len(prepared.Editable) == 0 {
+		location, _ := prepared.Input["source"].(string)
+		return p.fetchPlugin(ctx, location)
+	}
+	name, _ := prepared.Input["name"].(string)
+	plugin := Plugin{Preparation: &prepared, Source: name}
+	if prepared.Manifest != nil {
+		data, _ := json.Marshal(prepared.Manifest)
+		err = decode(data, &plugin)
+		if err == nil {
+			err = plugin.validate()
+		}
+	}
+	if !install {
+		if err != nil {
+			plugin.Error = err.Error()
+		}
+		return plugin, "", nil
+	}
+	if err != nil {
+		return plugin, "", err
+	}
+	folder, err := prepared.Write()
+	if err != nil {
+		return Plugin{}, "", err
+	}
+	return p.fetchPlugin(ctx, folder)
+}
+
+func (p *Project) InspectPlugin(ctx context.Context, source any) (Plugin, error) {
+	plugin, stage, err := p.preparePlugin(ctx, source, false)
 	if err == nil {
 		err = os.RemoveAll(stage)
 	}
 	return plugin, err
 }
 
-func (p *Project) Add(ctx context.Context, source string, out io.Writer) error {
-	plugin, stage, err := p.fetchPlugin(ctx, source)
+func (p *Project) Add(ctx context.Context, source any, out io.Writer) error {
+	plugin, stage, err := p.preparePlugin(ctx, source, true)
 	if err != nil {
 		return err
 	}
@@ -157,6 +224,16 @@ func (p *Project) Add(ctx context.Context, source string, out io.Writer) error {
 	for _, access := range plugin.Accesses {
 		if _, err := fmt.Fprintf(out, "- %s\n", access); err != nil {
 			return err
+		}
+	}
+	if plugin.Process != nil {
+		if _, err := fmt.Fprintf(out, "Program: %s\n", CommandText(plugin.Process.([]any))); err != nil {
+			return err
+		}
+		for _, key := range keys(plugin.Env) {
+			if _, err := fmt.Fprintf(out, "%s from secret %s\n", key, plugin.Env[key]); err != nil {
+				return err
+			}
 		}
 	}
 	if err := p.remove(plugin.Name); err != nil {
@@ -180,6 +257,16 @@ func (p *Project) Add(ctx context.Context, source string, out io.Writer) error {
 		os.RemoveAll(destination)
 		return err
 	}
+	if p.host != nil {
+		p.host.mu.Lock()
+		delete(p.host.processes, plugin.Name)
+		p.host.mu.Unlock()
+	}
+	if plugin.Process != nil && p.host != nil {
+		if _, err := fmt.Fprintln(out, "Starting program…"); err != nil {
+			return err
+		}
+	}
 	return p.load()
 }
 
@@ -193,6 +280,13 @@ func (p *Project) Remove(name string) error {
 }
 
 func (p *Project) remove(name string) error {
+	if p.host != nil {
+		p.host.mu.Lock()
+		if process := p.host.processes[name]; process != nil {
+			process.close()
+		}
+		p.host.mu.Unlock()
+	}
 	if err := os.RemoveAll(p.pluginDir(name)); err != nil {
 		return err
 	}

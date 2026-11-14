@@ -384,7 +384,7 @@ func TestProgramBindingProblems(t *testing.T) {
 		command         any
 		key, help       string
 	}{
-		{"unknown argument input", Values{"text": "text"}, Values{}, []any{"echo", "=inputs.absent"}, "run.args.1", "choose"},
+		{"unknown argument input", Values{"text": "text"}, Values{}, []any{"echo", "=inputs.absent"}, "run.args.1", "declared input path"},
 		{"unknown stdin input", Values{}, Values{}, Values{"args": []any{"cat"}, "stdin": "=inputs.absent"}, "run.stdin", "declared input path"},
 		{"unknown env input", Values{}, Values{}, Values{"args": []any{"cat"}, "env": Values{"TOKEN": "=inputs.absent"}}, "run.env.TOKEN", "declared input path"},
 		{"secret argument", Values{"token": "secret"}, Values{}, []any{"echo", "=inputs.token"}, "run.args.1", "stdin or env"},
@@ -394,7 +394,6 @@ func TestProgramBindingProblems(t *testing.T) {
 		{"object flag", Values{"data": "object"}, Values{}, []any{"echo", Values{"flag": "--x", "value": "=inputs.data"}}, "run.args.1.value", "use text"},
 		{"two stdout outputs", Values{}, Values{"a": "text", "b": "text"}, Values{"args": []any{"cat"}, "stdout": []any{"a", "b"}}, "run.stdout", "one output"},
 		{"unfilled output", Values{}, Values{"a": "text", "b": "text"}, Values{"args": []any{"cat"}, "stdout": "a"}, "run.stdout", "one object"},
-		{"quoted string", Values{}, Values{}, `python3 'one argument.py'`, "run", "argument list"},
 		{"shell string", Values{}, Values{}, "echo hi; touch marker", "run", "argument list"},
 		{"shell expansion", Values{}, Values{}, "echo $(touch marker)", "run", "argument list"},
 		{"dynamic executable", Values{"name": "text"}, Values{}, []any{"=inputs.name"}, "run.args.0", "fixed program"},

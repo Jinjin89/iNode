@@ -200,7 +200,7 @@ func typeOf(value any) Type {
 		}
 		t := Type{Name: "node", Fields: map[string]Type{}}
 		for name, port := range value.plan.Inputs {
-			if _, filled := value.In[name]; !filled && port.Default == nil {
+			if _, filled := value.In[name]; !filled && port.required() {
 				t.Fields["open input"] = port.Type
 			}
 		}
