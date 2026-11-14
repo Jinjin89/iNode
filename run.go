@@ -122,11 +122,10 @@ func (p *Project) begin(queued *Record) (*execution, error) {
 	if len(report.Problems) > 0 {
 		return nil, Problems(report.Problems)
 	}
-	values := bind(step.plan.Inputs, step.In, step.plan.Name, "", nil)
-	if len(values.Problems) > 0 {
-		return nil, values.Problems
+	*step, err = p.acceptInputs(*step, bound.Values)
+	if err != nil {
+		return nil, err
 	}
-	step.In = values.Values
 	record := newRecord(step.plan)
 	record.ID, record.Node, record.Unsaved = queued.ID, queued.Node, queued.Unsaved
 	record.Created, record.Trigger = queued.Created, queued.Trigger
@@ -150,8 +149,15 @@ func (e *execution) start(node Step, record *Record) error {
 }
 
 func (e *execution) execute(ctx context.Context, node Step, record *Record, location string) error {
+	data, inputErr := e.project.files(node.In, typeOf(node.plan.Inputs.tree()), takeFiles)
+	if inputErr == nil {
+		node.In, _ = data.(Values)
+	}
 	plan, inputs := node.plan, node.In
 	err := e.start(node, record)
+	if err == nil {
+		err = inputErr
+	}
 	var outputs Values
 	scrub := func(value any) any { return value }
 	if err == nil {
@@ -178,6 +184,11 @@ func (e *execution) execute(ctx context.Context, node Step, record *Record, loca
 		}
 	}
 	if err == nil {
+		data, fileErr := e.project.files(outputs, typeOf(plan.Outputs.tree()), returnedFiles)
+		outputs, _ = data.(Values)
+		err = fileErr
+	}
+	if err == nil {
 		bound := bind(plan.Outputs, outputs, location, "outputs.", nil)
 		outputs = bound.Values
 		problems := append(bound.Problems, missing(bound.Open, location, "outputs.")...)
@@ -200,6 +211,9 @@ func (e *execution) execute(ctx context.Context, node Step, record *Record, loca
 	}
 	if ctx.Err() != nil {
 		err = ctx.Err()
+	}
+	if err != nil {
+		outputs = nil
 	}
 	err = e.update(record, err, false, func() {
 		record.State, record.Finished, record.Outputs = "done", time.Now().UTC(), outputs
@@ -301,13 +315,13 @@ func (e *execution) workflow(ctx context.Context, plan *plan, record *Record, in
 	if failure != nil {
 		return nil, failure
 	}
-	outputs, _, err := resolve(plan.Workflow.Outputs, valuePath{"outputs"}, values)
+	outputs, _, err := resolve(plan.Workflow.Outputs, anyType, valuePath{"outputs"}, values)
 	result, _ := outputs.(map[string]any)
 	return result, err
 }
 
 func (node Step) arguments(tree Values, location string) (Values, error) {
-	resolved, _, err := resolve(node.In, nil, tree)
+	resolved, _, err := resolve(node.In, typeOf(node.plan.Inputs.tree()), nil, tree)
 	if err != nil {
 		return nil, err
 	}

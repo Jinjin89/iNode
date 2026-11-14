@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Background, ControlButton, Controls, Handle, Position, ReactFlow, ReactFlowProvider, applyNodeChanges, getNodesBounds, getViewportForBounds, useStore, useReactFlow, useUpdateNodeInternals } from '@xyflow/react';
-import { add, content, graph, group, handle, parseHandle, problems, rename, set, type, kind, box, inputs as nodeInputs, reference, connect, emptyReport, emptyValue, expose, move, groups, connectionProblem, unique, workflowDescription, nodeName, reveal, cardGeometry } from './model';
+import { add, content, graph, group, handle, parseHandle, problems, rename, set, type, kind, box, inputs as nodeInputs, reference, connect, emptyReport, emptyValue, expose, move, groups, connectionProblem, unique, workflowDescription, nodeName, reveal, cardGeometry, fileInput, fileLabel, fileValue } from './model';
 import { call, op } from './client';
 import { Duration, Value } from './Value';
 import { Icon } from './Icon';
@@ -98,7 +98,7 @@ function FieldLabel({ label, port, actions }) {
 
 export function Field({ label, port = {}, value, onChange, catalog = [], path = [], socket, descriptions = {}, issues = [], references = true, onOpen, onSave, propose, trail, children, item = false, placeholder, required = false, closed = false }) {
   const shape = kind(port);
-  const json = !['text', 'secret', 'number', 'bool', 'node'].includes(shape);
+  const json = !['text', 'secret', 'number', 'bool', 'node', 'file'].includes(shape);
   const fallback = port?.default;
   const shownValue = value === undefined ? fallback : value;
   const [draft, setDraft] = useState('');
@@ -107,7 +107,7 @@ export function Field({ label, port = {}, value, onChange, catalog = [], path = 
   const [secrets, setSecrets] = useState([]);
   const control = useRef(null);
   const shown = references && typeof shownValue === 'string' && shownValue.startsWith('==') ? shownValue.slice(1) : shownValue;
-  const text = shown === undefined ? '' : json ? JSON.stringify(shown, null, 2) : String(shown);
+  const text = shown === undefined || shape === 'file' && fileValue(shown) ? '' : json ? JSON.stringify(shown, null, 2) : String(shown);
   useReply(shape === 'secret' && onChange && !closed && op['secret list'], [], setSecrets, setError);
   useEffect(() => {
     setDraft(text); setEditing(false); setError(''); control.current?.setCustomValidity('');
@@ -175,7 +175,7 @@ export function Field({ label, port = {}, value, onChange, catalog = [], path = 
       {tools}
     </div>);
   }
-  const read = text => json ? text === '' ? undefined : JSON.parse(text) : shape === 'number' ? text === '' ? undefined : Number(text)
+  const read = text => shape === 'file' ? fileInput(text) : json ? text === '' ? undefined : JSON.parse(text) : shape === 'number' ? text === '' ? undefined : Number(text)
     : references && text.startsWith('=') ? '=' + text : text;
   const validate = text => {
     try {
@@ -201,6 +201,7 @@ export function Field({ label, port = {}, value, onChange, catalog = [], path = 
     },
   };
   return frame(<div className="field nodrag">{handle}
+    {shape === 'file' && fileValue(shown) && <small>{fileLabel(shown)}</small>}
     {shape === 'secret' ? <select aria-label="Secret name" required={required} value={shown ?? ''} onChange={event => onChange(references && event.target.value.startsWith('=') ? '=' + event.target.value : event.target.value)}>
       <option value="" disabled>{placeholder || 'Choose a secret'}</option>
       {[...new Set([...(shown ? [shown] : []), ...secrets])].map(name => <option key={name}>{name}</option>)}
@@ -208,7 +209,7 @@ export function Field({ label, port = {}, value, onChange, catalog = [], path = 
       shape === 'bool' ? <select aria-label="bool value" required={required} value={shown === undefined ? '' : String(shown)}
         onChange={event => onChange(event.target.value === 'true')}><option value="" disabled>{placeholder || 'Choose true or false'}</option><option value="true">True</option><option value="false">False</option></select> :
       <input {...entry} aria-label={shape + ' value'} type={shape === 'number' ? 'number' : 'text'} step={shape === 'number' ? 'any' : undefined}
-        placeholder={fallback === undefined ? placeholder || 'Not filled' : String(fallback)} />}
+        placeholder={shape === 'file' ? fileValue(shown) ? 'Replace with a path' : 'Path on this machine' : fallback === undefined ? placeholder || 'Not filled' : String(fallback)} />}
     {value === undefined && fallback !== undefined && <small>Default</small>}
     {tools}{error && <p className="problem">{error}</p>}
   </div>);

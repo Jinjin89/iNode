@@ -31,13 +31,13 @@ A node has a name (`plugin.name`), a one-sentence description, named typed input
 - **Fixed ports.** Inputs and outputs never change with the values given. A capability with several modes becomes several nodes. Data whose shape is only known at run time (query rows, spreadsheet columns) travels inside one `object` or `list` port.
 - **No outside effect.** A plugin may mark an operation as having no effect outside the run. Such an operation publishes nothing and does not change user data, an outside service's data, the objects it was given, or state shared with other runs. It may read data that changes, compute, and create new values and new files in the core's store. Using up time, money or a quota is allowed. Taking a message off a queue, moving a shared cursor, or adding to a stored conversation is not. Anything unknown stays unmarked. A workflow has the mark when every step in it does, including what is in its boxes, which the checker works out. The frontend shows it as "can be retried", and says that a retry may cost again and may give a different result.
 
-Types are names, checked when connecting, with no implicit conversion:
+Types are names, checked when connecting:
 
 | Type | Meaning |
 |---|---|
 | `text`, `number`, `bool`, `any` | Plain data. |
 | `list of T`, `object{name: T, …}` | A list with its item type; an object with named fields. Plain `list` and `object` leave the contents unstated. |
-| `file` | A reference to a file kept by the core, identified by its contents. This is how plugins exchange large or binary data. |
+| `file` | Immutable stored bytes, identified by SHA-256, labelled with a name and byte size: `{"$file":"sha256:…","name":"video.mp4","size":1234}`. A file input accepts a path, typed or arriving through an unchecked text connection; bytes are stored on acceptance or arrival. |
 | `secret` | The name of a stored secret. |
 | `node(T) gives U`, `node() gives U` | A node to be called by the receiver: the type of its one open input, if it has one, and of its single output. |
 | plugin-named handles | A live object such as a loaded model. Only nodes of the plugin that created it can operate on it, and it lives as long as that plugin's process. |
@@ -97,7 +97,7 @@ Trigger definitions are plain files beside the workflows. Whether a trigger is o
 
 One backend runs per project folder. The browser frontend and the command line are two clients of it with the same capabilities and the same checks.
 
-- The frontend is the main way to build. It is generated from node descriptions, so plugins ship no frontend code. An input becomes a field, a picker (files, secrets), a socket, or a box, by its type.
+- The frontend is the main way to build. It is generated from node descriptions, so plugins ship no frontend code. An input becomes a field (including file paths), a secret picker, a socket, or a box, by its type.
 - The command line runs nodes, shows runs, and manages triggers and plugins. Workflows are short text files that can be read and edited by hand; that is the advanced route.
 - A command that needs the project connects to its backend and starts it if none is running. A backend started this way keeps running and says so, including that switched-on triggers are now active. `inode stop` stops it.
 
@@ -168,17 +168,18 @@ outputs: {ok: =sent.ok}
 
 ## Writing a node
 
-A `.node` file describes a program as a node. In `nodes/<name>.node`, declare `doc`, inputs, outputs, optional `no_outside_effect` and `run`. Programs run there without a shell. `run` accepts space-separated words, an argument list, or `{args: [...]}`; quoting/shell characters require a list.
+A `.node` file describes a program as a node. In `nodes/<name>.node`, declare `doc`, inputs, outputs, optional `no_outside_effect` and `run`. Programs run without a shell. `run` accepts space-separated words, an argument list, or `{args: [...]}`; quoting/shell characters require a list.
 
 | Binding | What it does |
 |---|---|
 | `args: [..., =inputs.x]` | One argument per scalar/list item. |
 | `{flag: --name, value: =inputs.x}` | True sends flag; false omits; scalar/list repeats flag/value pairs. |
-| `stdin: =inputs.x` | Text unchanged; otherwise JSON. |
-| `stdout: count` | One declared output: text unchanged; otherwise one JSON value. |
+| `stdin: =inputs.x` | File bytes or text unchanged; otherwise JSON. |
+| `stdout: count` | One output: file bytes (labelled `count.bin`), text unchanged, otherwise one JSON value. |
 | `env: {TOKEN: =inputs.token}` | Scalars; secrets only here or stdin. |
+| `files: {in.md: =inputs.source, out.html: =outputs.html}` | Stage/collect files under relative names used in args; one producer per output. |
 
-Unbound streams use JSON objects of all inputs/outputs. Bad bindings fail at load; nonzero exit fails with scrubbed stderr. Plugin `setup` uses the same string/list rule. See [file forms](tutorial.md#the-two-file-forms).
+Without bindings, streams carry JSON objects of all inputs/outputs. File bindings leave JSON stdout for remaining outputs, or unused when none remain. `files` selects a fresh private folder, removed afterwards; otherwise programs run in the description folder. Bad bindings fail at load; nonzero exit fails with bounded scrubbed stderr. Plugin `setup` uses the same string/list rule. `file.save(file, path)` copies a result to disk; text `file.read`/`file.write` stay unchanged. File inputs and file.save paths accept `~/` or start at the project folder. See [file forms](tutorial.md#the-two-file-forms).
 
 ## Limits
 
@@ -201,4 +202,5 @@ These are deliberate. Each keeps the model small.
 | Formulas inside references | References select data by path only; computation is a node. |
 | Enforced limits on what a plugin can do | Plugins are trusted code; install only what you trust. |
 | Managing iNode from another machine | The backend serves the local machine only. |
+| Automatic removal of stored files | Archive/move whole projects including `.inode/`, or remove unneeded projects. Deleting blobs breaks run records. |
 | Importing n8n or ComfyUI workflow files | Adapters reuse their capabilities, not their formats. |

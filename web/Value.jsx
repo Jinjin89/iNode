@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Icon } from './Icon';
-import { box, canReference, copyText, duration, kind, nodeName, textPreview, type } from './model';
+import { box, canReference, copyText, duration, fileLabel, fileValue, kind, nodeName, textPreview, type } from './model';
 
 export function Duration({ record }) {
   const [now, setNow] = useState(Date.now);
@@ -19,12 +19,12 @@ export function Value({ value, port = {}, path = [], onUse, level = 0, compact =
   useEffect(() => { setCopied(''); showAll(false); }, [value]);
   if (compact) {
     const use = typeof value === 'string' ? value : value?.use;
-    const text = box(port) && use !== undefined ? nodeName(use) : copyText(value);
+    const text = fileValue(value) || kind(port) === 'file' ? fileLabel(value) : box(port) && use !== undefined ? nodeName(use) : copyText(value);
     return <span className="value-preview" title={text}>{text}</span>;
   }
-  const list = Array.isArray(value), tree = value !== null && typeof value === 'object';
+  const list = Array.isArray(value), tree = value !== null && typeof value === 'object' && !fileValue(value);
   const entries = tree ? Object.entries(value) : [];
-  const text = value === undefined ? 'Not available' : value === null ? 'null' : String(value);
+  const text = value === undefined ? 'Not available' : fileValue(value) ? fileLabel(value) : value === null ? 'null' : String(value);
   const preview = textPreview(text);
   const tagged = kind(port) && !['any', 'text', 'number', 'bool', 'object', 'list'].includes(kind(port));
   const actions = value !== undefined && <span className="field-actions">

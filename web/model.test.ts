@@ -1,5 +1,27 @@
 import { describe, expect, it } from 'vitest';
-import { add, box, canReference, connect, connectionProblem, content, copyText, duration, emptyReport, emptyValue, expose, filterRuns, graph, group, groups, handle, history, inputValues, kind, move, parseHandle, layout, reference, rename, runMessages, runTrail, runWorkflow, reveal, set, textPreview, type, workflowDescription, type Workflow, type Description, type Reference, type History, type Run } from './model';
+import { add, box, canReference, connect, connectionProblem, content, copyText, duration, emptyReport, emptyValue, expose, filterRuns, graph, group, groups, handle, history, inputValues, kind, move, parseHandle, layout, reference, rename, runMessages, runTrail, runWorkflow, reveal, set, textPreview, type, workflowDescription, fileInput, fileLabel, fileValue, type Workflow, type Description, type Reference, type History, type Run } from './model';
+
+it('keeps file paths and copied references, and shares file labels across views', () => {
+  const value = { $file: 'sha256:' + 'a'.repeat(64), name: '猫 file.bin', size: 1536 };
+  expect(fileInput('π folder/猫 file.bin')).toBe('π folder/猫 file.bin');
+  expect(fileInput('{a filename')).toBe('{a filename');
+  expect(fileInput(copyText(value))).toEqual(value);
+  expect(fileValue(value)).toBe(true);
+  expect(fileValue('a path')).toBe(false);
+  expect(fileValue({ $file: 1 })).toBe(false);
+  expect(fileLabel(value)).toBe('猫 file.bin · 1.5 kB');
+  for (const [size, label] of [[999, '999 B'], [1000, '1 kB'], [1650, '1.7 kB'], [999950, '1 MB'], [1e6, '1 MB'], [1e9, '1 GB']] as const) {
+    expect(fileLabel({ ...value, size })).toBe('猫 file.bin · ' + label);
+  }
+  expect(fileLabel({ ...value, size: 0 })).toBe('猫 file.bin · 0 B');
+  expect(fileLabel('π folder/猫 file.bin')).toBe('π folder/猫 file.bin');
+});
+
+it('draws a backend-approved text-to-file connection as unchecked', () => {
+  const workflow: Workflow = { inputs: { p: 'text' }, steps: { save: { use: 'file.save', in: { file: '=inputs.p', path: 'out.txt' } } } };
+  const report = { ...emptyReport, references: [{ step: '(inline)/save', input: 'file', from: ['inputs', 'p'], path: ['steps', 'save', 'in', 'file'], unchecked: true }] };
+  expect(graph(workflow, [{ name: 'file.save', inputs: { file: { type: 'file', kind: 'file' }, path: { type: 'text', kind: 'text' } } }], undefined, report).edges[0].className).toContain('unchecked');
+});
 
 const catalog: Description[] = [
   { name: 'text.upper', inputs: { text: 'text' }, outputs: { text: 'text' } },

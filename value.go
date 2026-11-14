@@ -76,7 +76,7 @@ func referenceParts(value string) []string {
 
 // A node-valued port is a leaf even when its syntax is an object.
 func walk(value any, want Type, path valuePath, leaf func(any, Type, valuePath) (any, error)) (any, error) {
-	if want.Name != "node" {
+	if want.Name != "node" && !fileLike(value) {
 		switch v := value.(type) {
 		case []any:
 			result := make([]any, len(v))
@@ -120,9 +120,9 @@ type Reference struct {
 	Bad       bool      `json:"bad,omitempty"`
 }
 
-func resolve(value any, path valuePath, tree Values) (any, []Reference, error) {
+func resolve(value any, want Type, path valuePath, tree Values) (any, []Reference, error) {
 	var found []Reference
-	result, err := walk(value, anyType, path, func(value any, _ Type, path valuePath) (any, error) {
+	result, err := walk(value, want, path, func(value any, want Type, path valuePath) (any, error) {
 		switch v := value.(type) {
 		case string:
 			if strings.HasPrefix(v, "==") {
@@ -136,12 +136,13 @@ func resolve(value any, path valuePath, tree Values) (any, []Reference, error) {
 				if err != nil {
 					return nil, Problem{Input: path.String(), Message: v + ": " + err.Error()}
 				}
-				found = append(found, Reference{Input: path.String(), From: parts, Path: path, Unchecked: typeOf(selected).unchecked()})
+				unchecked, _ := match(selected, want, map[string]Type{})
+				found = append(found, Reference{Input: path.String(), From: parts, Path: path, Unchecked: typeOf(selected).unchecked() || unchecked})
 				return selected, nil
 			}
 		case *Step:
 			bound := *v
-			inputs, refs, err := resolve(v.In, path.child("in"), tree)
+			inputs, refs, err := resolve(v.In, typeOf(v.plan.Inputs.tree()), path.child("in"), tree)
 			if err != nil {
 				return nil, err
 			}
@@ -157,7 +158,7 @@ func resolve(value any, path valuePath, tree Values) (any, []Reference, error) {
 func normalise(value any) (any, error) {
 	return walk(value, anyType, nil, func(value any, _ Type, _ valuePath) (any, error) {
 		switch value.(type) {
-		case *Step, map[string]any, []any:
+		case *Step, fileRef, map[string]any, []any:
 			return value, nil
 		}
 		return jsonData(value)
@@ -177,6 +178,13 @@ func match(value any, want Type, types map[string]Type) (bool, error) {
 	}
 	if want.Name == "any" {
 		return false, nil
+	}
+	if fileLike(value) && want.Name == "file" {
+		return false, nil
+	}
+	if got.Name == "text" && want.Name == "file" {
+		_, unknown := value.(Type)
+		return unknown, nil
 	}
 	if leaf, ok := value.(Type); ok && leaf.Name == "any" {
 		return true, nil

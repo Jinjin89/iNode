@@ -2,7 +2,7 @@
 
 How the model in `design.md` is built. This document follows the model and never the other way round: it may only use concepts defined there (node, run, trigger, plugin). If something here would require the user to learn a new idea, either `design.md` is changed on purpose or this document is simplified.
 
-**Built so far:** the core (catalog, checker, runner, run records), boxes with `map`, `choose`, `repeat`, `retry` and `try`, built-in nodes, program descriptions with text bindings, plugins installed from folders or git, secrets, the backend and command-line client, triggers with `schedule.every`, `schedule.daily` and `folder.new_file`, run from here, and the frontend's Canvas, Runs, When, Plugins and Secrets screens. Not built yet: managed files and file bindings, "move into box", web-request and plugin trigger kinds, long-lived plugin processes, `agent`, plugin search.
+**Built so far:** the core, boxes with `map`, `choose`, `repeat`, `retry` and `try`, bundled nodes including `file.save`, program descriptions with text/file bindings, an immutable content-addressed file store, folder/git plugins, secrets, the backend and command-line client, triggers with `schedule.every`, `schedule.daily` and `folder.new_file`, run from here, and the frontend's Canvas, Runs, When, Plugins and Secrets screens. Not built yet: opening files from the page, "move into box", web-request and plugin trigger kinds, long-lived plugin processes, `agent`, plugin search.
 
 ## Shape
 
@@ -73,7 +73,7 @@ Five screens:
 
 One confirmation names the thing and the consequence before discarding edits, removing a trigger/plugin/secret or clearing waiting events. Progress disables only its own action or row.
 
-A field is chosen by the input's type: text box, number box, switch, list editor, file picker, secret picker, socket only (for live objects, which cannot be typed in), or box. Each described port carries its type as display text and as structure from the same type tree, so clients do not parse the notation.
+A field is chosen by its type: text/path box, number box, switch, list editor, secret picker, socket only (live objects), or box. Files display name and size through the same Field/Value components. One backend normalizer checks files without copying, imports paths at acceptance/unchecked edges, and validates output references. Blobs are published durably before records reference them. Ports carry display text and structure from one type tree; clients never parse type notation.
 
 ## Command line
 

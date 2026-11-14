@@ -143,6 +143,69 @@ func TestCommands(t *testing.T) {
 	}
 }
 
+func TestRunPinsFileBeforeExecution(t *testing.T) {
+	cliProject(t)
+	if err := os.Mkdir("nodes", 0700); err != nil {
+		t.Fatal(err)
+	}
+	for name, text := range map[string]string{
+		"source.bin":     "accepted before execution reads stdin",
+		"nodes/pin.node": "doc: Wait before reading a file\ninputs: {source: file}\noutputs: {result: file}\nrun: {args: [python3, wait.py], stdin: =inputs.source, stdout: result}",
+		"nodes/wait.py":  "import shutil,sys,time\nfrom pathlib import Path\nPath('../ready').touch()\nwhile not Path('../release').exists(): time.sleep(0.005)\nshutil.copyfileobj(sys.stdin.buffer,sys.stdout.buffer)\n",
+	} {
+		if err := os.WriteFile(name, []byte(text), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	var out, diagnostic bytes.Buffer
+	done := make(chan error, 1)
+	go func() { done <- invokeCLI(ctx, []string{"run", "pin", "source=source.bin"}, &out, &diagnostic) }()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, err := os.Stat("ready"); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("file reader did not reach its gate")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	p, err := inode.Open(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runs, err := p.Runs()
+	if err != nil || len(runs) != 1 || runs[0].State != "running" || runs[0].Started.IsZero() {
+		t.Fatalf("accepted ordinary run: %+v, %v", runs, err)
+	}
+	accepted, ok := runs[0].Inputs["source"].(map[string]any)
+	if !ok || accepted["$file"] == nil {
+		t.Fatalf("ordinary acceptance retained a path: %+v", runs[0])
+	}
+	// Ordinary runs call begin before launch; there is no pre-begin run queue.
+	// The reader is blocked, yet acceptance has already persisted the bytes.
+	blob := filepath.Join(".inode", "files", strings.TrimPrefix(accepted["$file"].(string), "sha256:"))
+	data, err := os.ReadFile(blob)
+	if err != nil || string(data) != "accepted before execution reads stdin" {
+		t.Fatalf("bytes were not pinned on acceptance: %q, %v", data, err)
+	}
+	if err := os.Remove("source.bin"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("release", nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	var outputs map[string]map[string]any
+	if err := json.Unmarshal(out.Bytes(), &outputs); err != nil || outputs["result"]["$file"] != accepted["$file"] {
+		t.Fatalf("CLI lost accepted bytes: %s, %v", &out, err)
+	}
+}
+
 func TestPluginCommands(t *testing.T) {
 	source, err := filepath.Abs("../../examples/tiny_plugin")
 	if err != nil {

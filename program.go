@@ -5,19 +5,23 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
 )
 
 type program struct {
-	Args   []any  `json:"args"`
-	Stdin  any    `json:"stdin"`
-	Stdout any    `json:"stdout"`
-	Env    Values `json:"env"`
+	Args   []any             `json:"args"`
+	Stdin  any               `json:"stdin"`
+	Stdout any               `json:"stdout"`
+	Env    Values            `json:"env"`
+	Files  map[string]string `json:"files"`
 }
 
 func argumentList(value any, key string) ([]any, error) {
@@ -38,7 +42,7 @@ func argumentList(value any, key string) ([]any, error) {
 }
 
 func programValue(value any, inputs Values, key string) (any, error) {
-	result, _, err := resolve(value, nil, Values{"inputs": inputs})
+	result, _, err := resolve(value, anyType, nil, Values{"inputs": inputs})
 	if err != nil {
 		if problem, ok := err.(Problem); ok {
 			err = fmt.Errorf("%s", problem.Message)
@@ -66,12 +70,12 @@ func programText(value any) string {
 	return fmt.Sprint(value)
 }
 
-func secretType(t Type) bool {
-	if t.Name == "secret" || t.Item != nil && secretType(*t.Item) {
+func containsType(t Type, name string) bool {
+	if t.Name == name || t.Item != nil && containsType(*t.Item, name) {
 		return true
 	}
 	for _, field := range t.Fields {
-		if secretType(field) {
+		if containsType(field, name) {
 			return true
 		}
 	}
@@ -110,7 +114,7 @@ func arguments(args []any, inputs Values, key string, checking bool) ([]string, 
 		if items, ok := value.([]any); !checking && ok && len(items) == 0 {
 			continue
 		}
-		if secretType(t) {
+		if containsType(t, "secret") {
 			return nil, fmt.Errorf("%s: secrets cannot be arguments; bind the input through stdin or env instead", where)
 		}
 		if !argumentType(t) {
@@ -144,7 +148,7 @@ func loadProgram(value any, inputs, outputs Ports) (program, error) {
 	if _, object := value.(map[string]any); object {
 		data, _ := json.Marshal(value)
 		if err := decode(data, &p); err != nil {
-			return p, fmt.Errorf("run: %w; use args, stdin, stdout and env", err)
+			return p, fmt.Errorf("run: %w; use args, stdin, stdout, env and files", err)
 		}
 	} else {
 		args, err := argumentList(value, "run")
@@ -161,12 +165,42 @@ func loadProgram(value any, inputs, outputs Ports) (program, error) {
 			return p, err
 		}
 	}
+	remaining := maps.Clone(outputs)
+	for _, name := range keys(p.Files) {
+		where := "run.files." + name
+		if !filepath.IsLocal(name) || name == "." || filepath.Clean(name) != name || strings.ContainsAny(name, "\\\x00") || slices.Contains(strings.Split(name, "/"), "..") {
+			return p, fmt.Errorf("%s: use a plain relative filename without .., such as output.html", where)
+		}
+		for other := range p.Files {
+			if strings.HasPrefix(other, name+"/") {
+				return p, fmt.Errorf("%s: filenames cannot overlap; choose separate input and output names", where)
+			}
+		}
+		parts := referenceParts(p.Files[name])
+		if len(parts) < 2 {
+			return p, fmt.Errorf("%s: bind =inputs.name or =outputs.name", where)
+		}
+		if parts[0] == "outputs" {
+			if len(parts) != 2 || remaining[parts[1]].Type.Name != "file" {
+				return p, fmt.Errorf("%s: bind each declared file output once, using =outputs.name", where)
+			}
+			delete(remaining, parts[1])
+		} else {
+			value, err := programValue(p.Files[name], inputs.tree(), where)
+			if err != nil {
+				return p, err
+			}
+			if typeOf(value).Name != "file" {
+				return p, fmt.Errorf("%s: stage a file input with =inputs.name", where)
+			}
+		}
+	}
 	if p.Stdout != nil {
 		name, ok := p.Stdout.(string)
 		if !ok || !portName(name) {
 			return p, fmt.Errorf("run.stdout: bind one output name, such as stdout: count, not a list or object")
 		}
-		if _, found := outputs[name]; !found || len(outputs) != 1 {
+		if _, found := remaining[name]; !found || len(remaining) != 1 {
 			return p, fmt.Errorf("run.stdout: declare just output %q; use one object output to return several values", name)
 		}
 	}
@@ -186,10 +220,41 @@ func loadProgram(value any, inputs, outputs Ports) (program, error) {
 	return p, nil
 }
 
-func (p program) run(ctx context.Context, dir string, inputs Values, outputs Ports) (Values, error) {
+func (p program) run(ctx context.Context, project *Project, dir string, inputs Values, outputs Ports) (Values, error) {
 	args, err := arguments(p.Args, inputs, "run.args", false)
 	if err != nil {
 		return nil, err
+	}
+	if strings.ContainsRune(args[0], filepath.Separator) && !filepath.IsAbs(args[0]) {
+		args[0] = filepath.Join(dir, args[0])
+	}
+	if len(p.Files) > 0 {
+		work := filepath.Join(project.dir, ".inode", "work")
+		if err := os.MkdirAll(work, 0700); err != nil {
+			return nil, err
+		}
+		dir, err = os.MkdirTemp(work, "run-")
+		if err != nil {
+			return nil, err
+		}
+		defer os.RemoveAll(dir)
+		for _, name := range keys(p.Files) {
+			if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, name)), 0700); err != nil {
+				return nil, err
+			}
+			if referenceParts(p.Files[name])[0] == "inputs" {
+				value, _ := programValue(p.Files[name], inputs, "run.files."+name)
+				source, err := os.Open(project.blob(value.(fileRef)))
+				if err != nil {
+					return nil, err
+				}
+				err = writeStream(filepath.Join(dir, name), source, 0600, false)
+				source.Close()
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
 	}
 	var input any = inputs
 	if p.Stdin != nil {
@@ -207,6 +272,36 @@ func (p program) run(ctx context.Context, dir string, inputs Values, outputs Por
 	if err != nil {
 		return nil, err
 	}
+	var reader io.Reader = bytes.NewReader(data)
+	if ref, ok := input.(fileRef); ok {
+		file, err := os.Open(project.blob(ref))
+		if err != nil {
+			return nil, err
+		}
+		defer file.Close()
+		reader = file
+	}
+	var writer io.Writer
+	var stdout *os.File
+	if p.Stdout != nil && outputs[p.Stdout.(string)].Type.Name == "file" {
+		stdout, err = os.CreateTemp(filepath.Join(project.dir, ".inode"), ".stdout-")
+		if err != nil {
+			return nil, err
+		}
+		defer os.Remove(stdout.Name())
+		defer stdout.Close()
+		writer = stdout
+	} else if p.Stdout == nil && len(p.Files) > 0 {
+		remaining := maps.Clone(outputs)
+		for _, ref := range p.Files {
+			if parts := referenceParts(ref); parts[0] == "outputs" {
+				delete(remaining, parts[1])
+			}
+		}
+		if len(remaining) == 0 && len(outputs) > 0 {
+			writer = io.Discard
+		}
+	}
 	env := []string{}
 	for _, name := range keys(p.Env) {
 		value, err := programValue(p.Env[name], inputs, "run.env."+name)
@@ -215,11 +310,20 @@ func (p program) run(ctx context.Context, dir string, inputs Values, outputs Por
 		}
 		env = append(env, name+"="+programText(value))
 	}
-	data, err = process(ctx, dir, data, env, args...)
+	data, err = process(ctx, dir, reader, writer, env, args...)
 	if err != nil {
 		return nil, err
 	}
-	if p.Stdout != nil {
+	result := Values{}
+	if stdout != nil {
+		if _, err = stdout.Seek(0, 0); err != nil {
+			return nil, err
+		}
+		result[p.Stdout.(string)], err = project.storeFile(stdout, p.Stdout.(string)+".bin")
+		if err != nil {
+			return nil, err
+		}
+	} else if p.Stdout != nil {
 		name := p.Stdout.(string)
 		var value any = string(data)
 		if outputs[name].Type.Name != "text" {
@@ -227,14 +331,50 @@ func (p program) run(ctx context.Context, dir string, inputs Values, outputs Por
 				return nil, fmt.Errorf("run.stdout: output %q needs one JSON %s value: %w", name, outputs[name].Type, err)
 			}
 		}
-		return Values{name: value}, nil
+		result[name] = value
+	} else if writer == nil {
+		if err := json.Unmarshal(data, &result); err != nil {
+			return nil, fmt.Errorf("print one JSON object of outputs: %w", err)
+		}
+		if result == nil {
+			return nil, fmt.Errorf("print one JSON object of outputs, not null")
+		}
 	}
-	var result Values
-	if err := json.Unmarshal(data, &result); err != nil {
-		return nil, fmt.Errorf("print one JSON object of outputs: %w", err)
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
 	}
-	if result == nil {
-		return nil, fmt.Errorf("print one JSON object of outputs, not null")
+	for _, name := range keys(p.Files) {
+		parts := referenceParts(p.Files[name])
+		if parts[0] != "outputs" {
+			continue
+		}
+		if _, exists := result[parts[1]]; exists {
+			return nil, fmt.Errorf("run.files.%s: output %s is already bound; omit it from JSON stdout", name, parts[1])
+		}
+		root, err := os.OpenRoot(dir)
+		if err != nil {
+			return nil, err
+		}
+		defer root.Close()
+		segments := strings.Split(name, "/")
+		for i := range segments {
+			info, err := root.Lstat(strings.Join(segments[:i+1], "/"))
+			if err != nil || info.Mode()&os.ModeSymlink != 0 || i == len(segments)-1 && !info.Mode().IsRegular() {
+				return nil, fmt.Errorf("run.files.%s: output %s must be a regular file without symlinks: %v", name, parts[1], err)
+			}
+		}
+		file, err := root.Open(name)
+		if err != nil {
+			return nil, err
+		}
+		defer file.Close()
+		if info, err := file.Stat(); err != nil || !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("run.files.%s: output %s must be a regular file", name, parts[1])
+		}
+		result[parts[1]], err = project.storeFile(file, name)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return result, nil
 }
@@ -275,7 +415,7 @@ func (p *Project) loadNodes(dir, prefix string) error {
 			Doc: description.Doc, Inputs: description.Inputs, Outputs: description.Outputs,
 			NoOutsideEffect: description.NoOutsideEffect, problem: err,
 			run: func(ctx context.Context, inputs Values, _ Call) (Values, error) {
-				return command.run(ctx, dir, inputs, description.Outputs)
+				return command.run(ctx, p, dir, inputs, description.Outputs)
 			},
 		})
 	}
@@ -303,9 +443,14 @@ func (tail *stderrTail) Write(data []byte) (int, error) {
 	return n, nil
 }
 
-func process(ctx context.Context, dir string, input []byte, env []string, args ...string) ([]byte, error) {
+func process(ctx context.Context, dir string, input io.Reader, output io.Writer, env []string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
-	cmd.Dir, cmd.Stdin = dir, bytes.NewReader(input)
+	cmd.Dir, cmd.Stdin = dir, input
+	var buffer bytes.Buffer
+	if output == nil {
+		output = &buffer
+	}
+	cmd.Stdout = output
 	if len(env) != 0 {
 		cmd.Env = append(os.Environ(), env...)
 	}
@@ -313,7 +458,7 @@ func process(ctx context.Context, dir string, input []byte, env []string, args .
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	var stderr stderrTail
 	cmd.Stderr = &stderr
-	output, err := cmd.Output()
+	err := cmd.Run()
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
@@ -327,5 +472,5 @@ func process(ctx context.Context, dir string, input []byte, env []string, args .
 		}
 		return nil, fmt.Errorf("program %q: %w: %s", args[0], err, message)
 	}
-	return output, nil
+	return buffer.Bytes(), nil
 }

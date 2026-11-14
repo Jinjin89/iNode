@@ -1,0 +1,7 @@
+doc: Extract MP3 audio from video.
+inputs: {video: file}
+outputs: {audio: file}
+no_outside_effect: true
+run:
+  args: [ffmpeg, -nostdin, -i, in.mp4, -vn, out.mp3]
+  files: {in.mp4: =inputs.video, out.mp3: =outputs.audio}

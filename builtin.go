@@ -185,6 +185,23 @@ func builtins(dir string) map[string]Node {
 				return Values{"value": in["a"].(float64) < in["b"].(float64)}, nil
 			},
 		},
+		"file.save": {
+			Doc:    "Save a stored file, creating folders and replacing the destination; paths start at the project folder or ~/.",
+			Inputs: Ports{"file": {Type: Type{Name: "file"}}, "path": {Type: textType}}, Outputs: Ports{"path": {Type: textType}},
+			run: func(_ context.Context, in Values, _ Call) (Values, error) {
+				project := Project{dir: dir}
+				name := project.fullPath(in["path"].(string))
+				source, err := os.Open(project.blob(in["file"].(fileRef)))
+				if err != nil {
+					return nil, err
+				}
+				defer source.Close()
+				if err = os.MkdirAll(filepath.Dir(name), 0755); err == nil {
+					err = writeStream(name, source, 0644, true)
+				}
+				return Values{"path": name}, err
+			},
+		},
 		"file.read": {
 			Doc: "Read a UTF-8 text file; relative paths start at the project folder.", NoOutsideEffect: true,
 			Inputs: Ports{"path": {Type: textType}}, Outputs: Ports{"text": {Type: textType}},

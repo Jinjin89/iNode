@@ -267,7 +267,13 @@ func readInputs(ctx context.Context, client *inode.Client, name string, args []s
 		}
 		var value any = raw
 		port, _ := ports[key].(map[string]any)
-		if port != nil && port["type"] != "text" && port["type"] != "secret" {
+		if port != nil && port["type"] == "file" {
+			if strings.HasPrefix(strings.TrimSpace(raw), "{") {
+				if json.Unmarshal([]byte(raw), &value) != nil {
+					value = raw
+				}
+			}
+		} else if port != nil && port["type"] != "text" && port["type"] != "secret" {
 			if err := yaml.Unmarshal([]byte(raw), &value); err != nil {
 				return nil, fmt.Errorf("input %q: supply a YAML value: %w", key, err)
 			}

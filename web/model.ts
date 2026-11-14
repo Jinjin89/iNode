@@ -24,6 +24,19 @@ export const reference = (value: any): boolean => typeof value === 'string' && v
 export const handle = (path: Path): string => encodeURIComponent(JSON.stringify(path));
 export const parseHandle = (id: string): Path => JSON.parse(decodeURIComponent(id));
 export const copyText = (value: any): string => typeof value === 'string' ? value : JSON.stringify(value, null, 2) ?? '';
+export const fileValue = (value: any): boolean => value !== null && typeof value === 'object' && Object.hasOwn(value, '$file') && typeof value.$file === 'string';
+export function fileLabel(value: any): string {
+  if (!fileValue(value) || typeof value.name !== 'string' || !Number.isFinite(value.size) || value.size < 0) return copyText(value);
+  const units = ['B', 'kB', 'MB', 'GB', 'TB'];
+  let index = Math.min(units.length - 1, Math.floor(Math.log10(Math.max(1, value.size)) / 3));
+  const rounded = (index: number) => Math.round(value.size / (1000 ** index / 10)) / 10;
+  if (rounded(index) >= 1000 && index < units.length - 1) index++;
+  return value.name + ' · ' + rounded(index) + ' ' + units[index];
+}
+export function fileInput(text: string): any {
+  if (text.trim().startsWith('{')) { try { return JSON.parse(text); } catch {} }
+  return text;
+}
 export const textPreview = (text: string): string => text.split('\n').slice(0, 8).join('\n').slice(0, 400);
 export const canReference = (path: Path): boolean => path.length >= 2 && path.every(part => !String(part).includes('.'));
 export const filterRuns = (runs: Run[], node: string, state: string, trigger = ''): Run[] => runs.filter(run => (!node || run.node === node) && (!state || run.state === state) && (!trigger || run.trigger === trigger));

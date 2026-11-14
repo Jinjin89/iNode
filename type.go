@@ -37,7 +37,7 @@ func (p *typeParser) parse() (Type, error) {
 	p.tokens = p.tokens[1:]
 	t := Type{Name: name}
 	switch name {
-	case "text", "number", "bool", "any", "secret":
+	case "text", "number", "bool", "any", "secret", "file":
 	case "list":
 		t.Item = &anyType
 		if p.take("of") {
@@ -188,6 +188,9 @@ func (t Type) shape() any {
 }
 
 func typeOf(value any) Type {
+	if fileLike(value) {
+		return Type{Name: "file"}
+	}
 	switch value := value.(type) {
 	case Type:
 		return value

@@ -1,0 +1,7 @@
+doc: Convert Markdown to HTML.
+inputs: {source: file}
+outputs: {html: file}
+no_outside_effect: true
+run:
+  args: [pandoc, input.md, -o, output.html]
+  files: {input.md: =inputs.source, output.html: =outputs.html}

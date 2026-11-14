@@ -108,12 +108,12 @@ func (p *Project) fetchPlugin(ctx context.Context, source string) (Plugin, strin
 		}
 	} else {
 		url, ref, _ := strings.Cut(source, "#")
-		_, err = process(ctx, p.dir, nil, nil, "git", "clone", "--", url, stage)
+		_, err = process(ctx, p.dir, nil, nil, nil, "git", "clone", "--", url, stage)
 		if err == nil && ref != "" {
 			var commit []byte
-			commit, err = process(ctx, stage, nil, nil, "git", "rev-parse", "--verify", "--end-of-options", ref+"^{commit}")
+			commit, err = process(ctx, stage, nil, nil, nil, "git", "rev-parse", "--verify", "--end-of-options", ref+"^{commit}")
 			if err == nil {
-				_, err = process(ctx, stage, nil, nil, "git", "checkout", "--detach", strings.TrimSpace(string(commit)))
+				_, err = process(ctx, stage, nil, nil, nil, "git", "checkout", "--detach", strings.TrimSpace(string(commit)))
 			}
 		}
 	}
@@ -169,7 +169,7 @@ func (p *Project) Add(ctx context.Context, source string, out io.Writer) error {
 	if plugin.Setup != nil {
 		raw, _ := argumentList(plugin.Setup, "setup")
 		args, _ := arguments(raw, nil, "setup", false)
-		if _, err = process(ctx, destination, nil, nil, args...); err != nil {
+		if _, err = process(ctx, destination, nil, nil, nil, args...); err != nil {
 			err = fmt.Errorf("plugin %q setup: %w", plugin.Name, err)
 		}
 	}

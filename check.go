@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -148,7 +149,7 @@ func (c *checker) compile(step *Step, location string, tree Values, path valuePa
 		}
 		supplied[input] = parsed[input]
 		if tree != nil {
-			selected, found, err := resolve(parsed[input], valuePath{input}, tree)
+			selected, found, err := resolve(parsed[input], want, valuePath{input}, tree)
 			if err != nil {
 				c.error(location, input, err)
 			} else {
@@ -176,7 +177,19 @@ func (c *checker) compile(step *Step, location string, tree Values, path valuePa
 	}
 	step.In = parsed
 	p.Inputs, p.Outputs = p.Inputs.substitute(types), p.Outputs.substitute(types)
+	if c.scope == c.root {
+		for _, ref := range refs {
+			for i := range c.report.References {
+				if slices.Equal(c.report.References[i].Path, c.path.child(ref.Path...)) {
+					c.report.References[i].Unchecked = ref.Unchecked
+				}
+			}
+		}
+	}
 	for _, input := range keys(bound.Values) {
+		if _, err := c.project.files(bound.Values[input], p.Inputs[input].Type, checkFiles, input); err != nil {
+			c.error(location, input, err)
+		}
 		if err := c.project.checkSecrets(bound.Values[input], p.Inputs[input].Type, valuePath{input}); err != nil {
 			c.error(location, input, err)
 		}
@@ -289,7 +302,7 @@ func (c *checker) workflow(p *plan, location string) {
 			c.problem(location, "outputs."+output, "rename the output without dots or equals signs")
 		}
 		parsed := c.expression(original.Outputs[output], anyType, location, valuePath{"outputs", output}, tree)
-		value, refs, err := resolve(parsed, valuePath{"outputs", output}, tree)
+		value, refs, err := resolve(parsed, anyType, valuePath{"outputs", output}, tree)
 		if err != nil {
 			c.error(location, "outputs."+output, err)
 			value = anyType
@@ -315,6 +328,11 @@ func (c *checker) references(location string, refs []Reference) map[string]bool 
 
 func (c *checker) expression(value any, want Type, location string, path valuePath, tree Values) any {
 	result, _ := walk(value, want, path, func(value any, want Type, path valuePath) (any, error) {
+		if fileLike(value) {
+			if _, err := c.project.files(value, want, checkFiles, path...); err != nil {
+				c.error(location, path.String(), err)
+			}
+		}
 		if text, ok := value.(string); ok && tree != nil && c.scope == c.root {
 			if from := referenceParts(text); from != nil {
 				c.report.References = append(c.report.References, Reference{Step: location, Input: path.String(), From: from, Path: c.path.child(path...)})

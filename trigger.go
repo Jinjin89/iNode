@@ -224,6 +224,10 @@ func (s *triggerService) accept(ctx context.Context, p *Project, name string, pl
 	if err != nil {
 		return err
 	}
+	data, err = p.files(data, typeOf(plan.Workflow.Steps["event"].plan.Outputs.tree()), takeFiles)
+	if err != nil {
+		return err
+	}
 	bound := bind(plan.Workflow.Steps["event"].plan.Outputs, data.(Values), "event", "", nil)
 	problems := append(bound.Problems, missing(bound.Open, "event", "")...)
 	if len(problems) > 0 {
@@ -231,12 +235,15 @@ func (s *triggerService) accept(ctx context.Context, p *Project, name string, pl
 	}
 	tree = Values{"inputs": tree["inputs"], "event": bound.Values}
 	target := plan.Workflow.Steps["run"]
-	resolved, _, err := resolve(target.In, nil, tree)
+	inputs, err := target.arguments(tree, "run")
 	if err != nil {
 		return err
 	}
-	inputs, _ := resolved.(Values)
-	record := newRun(target.Use, inputs, name+" (inline)")
+	target, err = p.acceptInputs(target, inputs)
+	if err != nil {
+		return err
+	}
+	record := newRun(target.Use, target.In, name+" (inline)")
 	record.Trigger = name
 	if !record.Created.After(s.last) {
 		record.Created = s.last.Add(time.Nanosecond)

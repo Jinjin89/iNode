@@ -51,6 +51,17 @@ func Serve(ctx context.Context, dir string) error {
 	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		return fmt.Errorf("a backend already holds this project's lock: %w", err)
 	}
+	if err := os.RemoveAll(filepath.Join(private, "work")); err != nil {
+		return err
+	}
+	for _, pattern := range []string{".stdout-*", "files/.pending-*"} {
+		paths, _ := filepath.Glob(filepath.Join(private, pattern))
+		for _, path := range paths {
+			if err := os.Remove(path); err != nil {
+				return err
+			}
+		}
+	}
 	p, err := Open(dir)
 	if err != nil {
 		return err
