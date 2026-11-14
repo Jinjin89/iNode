@@ -252,7 +252,29 @@ func (p *Project) load() error {
 	if err := p.loadNodes(filepath.Join(p.dir, "nodes"), ""); err != nil {
 		return err
 	}
-	return p.loadPlugins()
+	if p.plugins, err = readPlugins(p.dir); err != nil {
+		return err
+	}
+	processes := map[int]*pluginProcess{}
+	for i, plugin := range p.plugins {
+		if plugin.State == "installed" {
+			if err := p.loadNodes(filepath.Join(p.pluginDir(plugin.Name), "nodes"), plugin.Name+"."); err != nil {
+				return err
+			}
+			if plugin.Process != nil && p.host != nil {
+				processes[i] = p.host.launch(p, plugin)
+			}
+		}
+	}
+	for i, plugin := range p.plugins {
+		if plugin.State == "installed" && plugin.Process != nil {
+			if process := processes[i]; process != nil {
+				p.attachProcess(process)
+			}
+			p.plugins[i].State, p.plugins[i].Error = p.host.state(plugin.Name)
+		}
+	}
+	return nil
 }
 
 func readYAML(path string, target any) error {

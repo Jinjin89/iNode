@@ -178,9 +178,7 @@ func TestProcessPluginExampleAndLifecycle(t *testing.T) {
 		t.Fatal("backend left plugin process alive")
 	}
 	client = runningBackend(t, p.dir)
-	if processRows(t, client)[0].State != "running" {
-		t.Fatal("process did not restart")
-	}
+	waitProcess(t, func() bool { return processRows(t, client)[0].State == "running" })
 	newPID := processPID(t, p.pluginDir("counter"))
 	if newPID == 0 || newPID == pid {
 		t.Fatal("backend restart reused the old process")

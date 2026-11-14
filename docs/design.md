@@ -91,21 +91,21 @@ Each event starts its own ordinary run. The behaviour is fixed and the same for 
 - An accepted event is a run from that moment: it is stored as a run that is waiting, and the waiting runs of a trigger are its queue. After a restart, a run that had not started still runs once; a run that had started is marked interrupted and is not started again. Events may arrive twice. What happens before acceptance depends on where the event comes from.
 - Switching a trigger off stops new events, lets the current run finish, and keeps waiting events for when it is switched on again. The user can clear them.
 
-Trigger definitions are plain files beside the workflows. Whether a trigger is on is remembered per machine and starts as off in a copied project. Triggers that are on are active whenever the backend is running.
+Trigger definitions are plain files beside the workflows. Whether a trigger is on is remembered per machine and starts as off in a copied project. Enabled triggers start when the backend's catalog is ready.
 
 ## Using it
 
-One backend runs per project folder. The browser frontend and the command line are two clients of it with the same capabilities and the same checks.
+One backend runs per project folder. Browser and command line share capabilities and checks; page, help, stop and plugin status answer during startup, while other work waits for the catalog.
 
 - The frontend is the main way to build. It is generated from node descriptions, so plugins ship no frontend code. An input becomes a field (including file paths), a secret picker, a socket, or a box, by its type.
 - The command line runs nodes, shows runs, and manages triggers and plugins. Workflows are short text files that can be read and edited by hand; that is the advanced route.
-- A command that needs the project connects to its backend and starts it if none is running. A backend started this way keeps running and says so, including that switched-on triggers are now active. `inode stop` stops it.
+- A command that needs the project connects to its backend and starts it if none is running. The backend keeps running and says when switched-on triggers start. `inode stop` stops it.
 
 ## Plugins
 
 A plugin is a folder with a `plugin` manifest (`name`, `version`, `doc`, `accesses`, optional `setup`) and `.node` files. Optional `process` uses the same string/list argument rule as `setup`, without a shell; `env: {API_KEY: stored_key}` binds environment variables to secret names, shown before installation. Its working folder is the installed plugin folder; its environment contains PATH/HOME/TMPDIR/LANG plus these bindings.
 
-One process starts on installation/backend startup, stays running, and stops on removal/replacement/shutdown: close stdin, wait briefly, then end its process group. Its nodes join the `.node` files as `plugin.node`. It reads requests on stdin and writes replies on stdout, one JSON object per line (replies up to 1 MiB), with string ids; stderr is bounded diagnostics. Only three messages:
+Processes start on installation and together on backend startup; each shows `starting` until it describes its nodes or fails. They run until removal/replacement/shutdown: close stdin, wait briefly, then end the process group. Nodes join `.node` files as `plugin.node`. Requests and replies use stdin/stdout, one JSON object per line (replies up to 1 MiB), with string ids; stderr is bounded diagnostics. Only three messages:
 
 - **describe:** `{"id":"1","method":"describe"}` → `{"id":"1","nodes":{"next":{"doc":"Advance counter.","inputs":{},"outputs":{"count":"number"}}}}`. Node descriptions use the usual ports and optional `no_outside_effect`, without `run`.
 - **run:** `{"id":"2","method":"run","node":"next","inputs":{},"dir":"/project/.inode/work/plugin-xyz"}` → `{"id":"2","outputs":{"count":1}}`, or `{"id":"2","error":"what went wrong"}`. Files must be closed before replying: a declared file leaf may be an absolute path inside `dir`; the host imports it before checking/publishing outputs, then removes `dir`. Existing stored references also work.

@@ -103,7 +103,7 @@ func command(ctx context.Context, args []string, out, diagnostic io.Writer) erro
 		return err
 	}
 	if started {
-		fmt.Fprintln(diagnostic, "started backend for this project; switched-on triggers are active; use inode stop to stop it")
+		fmt.Fprintln(diagnostic, "started backend for this project; switched-on triggers start when plugins are ready; use inode stop to stop it")
 	}
 	if operation == "start" {
 		url := "http://" + client.Address + "/#" + client.Credential

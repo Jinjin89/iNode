@@ -65,43 +65,43 @@ func (p *Project) pluginDir(name string) string {
 	return filepath.Join(p.dir, ".inode", "plugins", name)
 }
 
-func (p *Project) loadPlugins() error {
-	p.plugins = []Plugin{}
-	err := readYAML(filepath.Join(p.dir, "plugins"), &p.plugins)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		return err
+func readPlugins(dir string) ([]Plugin, error) {
+	plugins := []Plugin{}
+	if err := readYAML(filepath.Join(dir, "plugins"), &plugins); err != nil && !os.IsNotExist(err) {
+		return nil, err
 	}
 	seen := map[string]bool{}
-	for i, plugin := range p.plugins {
+	for i, plugin := range plugins {
 		if err := plugin.validate(); err != nil {
-			return err
+			return nil, err
 		}
 		if plugin.Source == "" || seen[plugin.Name] {
-			return fmt.Errorf("plugins: list %q once, with its source", plugin.Name)
+			return nil, fmt.Errorf("plugins: list %q once, with its source", plugin.Name)
 		}
 		seen[plugin.Name] = true
 		var installed Plugin
-		err := readYAML(filepath.Join(p.pluginDir(plugin.Name), "plugin"), &installed)
-		p.plugins[i].State = "missing"
+		err := readYAML(filepath.Join(dir, ".inode", "plugins", plugin.Name, "plugin"), &installed)
+		plugins[i].State = "missing"
 		if err == nil && installed.Name == plugin.Name && installed.Version == plugin.Version {
 			if err := installed.validate(); err != nil {
-				p.plugins[i].State, p.plugins[i].Error = "unavailable", fmt.Sprintf("Plugin %q is unavailable (%v). Add the plugin again.", plugin.Name, err)
+				plugins[i].State, plugins[i].Error = "unavailable", fmt.Sprintf("Plugin %q is unavailable (%v). Add the plugin again.", plugin.Name, err)
 				continue
 			}
 			installed.Source, installed.State = plugin.Source, "installed"
-			p.plugins[i] = installed
-			if err := p.loadNodes(filepath.Join(p.pluginDir(plugin.Name), "nodes"), plugin.Name+"."); err != nil {
-				return err
-			}
-			if installed.Process != nil {
-				p.attachProcess(&p.plugins[i])
-			}
+			plugins[i] = installed
 		}
 	}
-	return nil
+	return plugins, nil
+}
+
+func (b *backend) plugins() ([]Plugin, error) {
+	plugins, err := readPlugins(b.dir)
+	for i, plugin := range plugins {
+		if plugin.State == "installed" && plugin.Process != nil {
+			plugins[i].State, plugins[i].Error = b.host.state(plugin.Name)
+		}
+	}
+	return plugins, err
 }
 
 func (p *Project) lookup(name string) Node {

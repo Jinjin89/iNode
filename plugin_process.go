@@ -31,6 +31,7 @@ type pluginProcess struct {
 	cmd        *exec.Cmd
 	stdin      *os.File
 	done       chan struct{}
+	ready      chan struct{}
 	pending    map[string]chan pluginReply
 	nodes      map[string]Node
 	err        error
@@ -46,40 +47,60 @@ func (h *pluginHost) close() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for _, process := range h.processes {
+		<-process.ready
 		process.close()
 	}
 }
 
-func (p *Project) attachProcess(plugin *Plugin) {
-	plugin.State, plugin.Error = "unavailable", "start the project's backend to run this plugin"
-	if p.host == nil {
-		return
-	}
-	h := p.host
+func (h *pluginHost) launch(p *Project, plugin Plugin) *pluginProcess {
 	h.mu.Lock()
+	defer h.mu.Unlock()
 	r := h.processes[plugin.Name]
 	if r == nil {
-		r = &pluginProcess{name: plugin.Name, done: make(chan struct{}), pending: map[string]chan pluginReply{}, clean: func(v any) any { return v }}
+		r = &pluginProcess{name: plugin.Name, done: make(chan struct{}), ready: make(chan struct{}), pending: map[string]chan pluginReply{}, clean: func(v any) any { return v }}
 		h.processes[plugin.Name] = r
-		r.start(h.ctx, p, *plugin)
+		go r.start(h.ctx, p, plugin)
 	}
+	return r
+}
+
+func (h *pluginHost) state(name string) (string, string) {
+	if h == nil {
+		return "unavailable", "start the project's backend to run this plugin"
+	}
+	h.mu.Lock()
+	r := h.processes[name]
 	h.mu.Unlock()
+	if r != nil {
+		select {
+		case <-r.ready:
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			if r.err != nil {
+				return "unavailable", r.err.Error()
+			}
+			return "running", ""
+		default:
+		}
+	}
+	return "starting", ""
+}
+
+func (p *Project) attachProcess(r *pluginProcess) {
+	<-r.ready
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	plugin.State, plugin.Error = "running", ""
-	if r.err != nil {
-		plugin.State, plugin.Error = "unavailable", r.err.Error()
-	}
 	for name, node := range r.nodes {
 		node.problem = r.err
 		node.run = func(ctx context.Context, inputs Values, _ Call) (Values, error) {
 			return r.run(ctx, p, name, inputs, node)
 		}
-		p.register(plugin.Name+"."+name, node)
+		p.register(r.name+"."+name, node)
 	}
 }
 
 func (r *pluginProcess) start(ctx context.Context, p *Project, plugin Plugin) {
+	defer close(r.ready)
 	ports, names := Ports{}, Values{}
 	for key, name := range plugin.Env {
 		ports[key], names[key] = Port{Type: Type{Name: "secret"}}, name
