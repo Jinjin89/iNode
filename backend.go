@@ -26,6 +26,7 @@ type backend struct {
 	wg       sync.WaitGroup
 	requests sync.WaitGroup
 	triggers *triggerService
+	host     *pluginHost
 }
 
 type activeRun struct {
@@ -92,6 +93,12 @@ func Serve(ctx context.Context, dir string) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	b := &backend{dir: dir, ctx: ctx, cancel: cancel, offline: make(chan struct{}), active: map[string]*activeRun{}}
+	b.host = &pluginHost{ctx: ctx, processes: map[string]*pluginProcess{}}
+	defer b.host.close()
+	p.host = b.host
+	if err := p.load(); err != nil {
+		return err
+	}
 	if err := b.openTriggers(p, runs); err != nil {
 		return err
 	}
@@ -173,6 +180,7 @@ func Serve(ctx context.Context, dir string) error {
 	b.mu.Lock()
 	b.cancel()
 	b.mu.Unlock()
+	b.host.close()
 	b.wg.Wait()
 	os.Remove(backendFile(dir))
 	close(b.offline)

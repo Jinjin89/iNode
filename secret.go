@@ -93,6 +93,11 @@ func (p *Project) secretInputs(inputs Values, ports Ports) (Values, func(any) an
 		}
 		return value, nil
 	})
+	bound, _ := values.(Values)
+	return bound, secretScrubber(replacements), err
+}
+
+func secretScrubber(replacements map[string]string) func(any) any {
 	secrets := keys(replacements)
 	sort.SliceStable(secrets, func(i, j int) bool { return len(secrets[i]) > len(secrets[j]) })
 	pairs := []string{}
@@ -119,6 +124,5 @@ func (p *Project) secretInputs(inputs Values, ports Ports) (Values, func(any) an
 		})
 		return clean
 	}
-	bound, _ := values.(Values)
-	return bound, scrub, err
+	return scrub
 }

@@ -182,16 +182,21 @@ type Project struct {
 	dir     string
 	nodes   map[string]Node
 	plugins []Plugin
+	host    *pluginHost
 	mu      *sync.Mutex
 	publish func(*Record) // Called under mu.
 }
 
 func Open(dir string) (*Project, error) {
+	return openProject(dir, nil)
+}
+
+func openProject(dir string, host *pluginHost) (*Project, error) {
 	dir, err := filepath.Abs(dir)
 	if err != nil {
 		return nil, err
 	}
-	p := &Project{dir: dir, mu: &sync.Mutex{}}
+	p := &Project{dir: dir, mu: &sync.Mutex{}, host: host}
 	return p, p.load()
 }
 

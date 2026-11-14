@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 )
 
@@ -22,6 +23,18 @@ type program struct {
 	Stdout any               `json:"stdout"`
 	Env    Values            `json:"env"`
 	Files  map[string]string `json:"files"`
+}
+
+func commandText(args []any) string {
+	words := make([]string, len(args))
+	for i, value := range args {
+		word := value.(string)
+		if word == "" || strings.ContainsAny(word, " \t\r\n\v\f'\"$`\\|&;<>*?[]{}()!~#") {
+			word = "'" + strings.ReplaceAll(word, "'", "'\\''") + "'"
+		}
+		words[i] = word
+	}
+	return strings.Join(words, " ")
 }
 
 func argumentList(value any, key string) ([]any, error) {
@@ -425,11 +438,14 @@ func (p *Project) loadNodes(dir, prefix string) error {
 const stderrLimit = 8 * 1024
 
 type stderrTail struct {
+	mu        sync.Mutex
 	data      []byte
 	truncated bool
 }
 
 func (tail *stderrTail) Write(data []byte) (int, error) {
+	tail.mu.Lock()
+	defer tail.mu.Unlock()
 	n := len(data)
 	if n > stderrLimit {
 		data = data[n-stderrLimit:]
@@ -443,19 +459,35 @@ func (tail *stderrTail) Write(data []byte) (int, error) {
 	return n, nil
 }
 
-func process(ctx context.Context, dir string, input io.Reader, output io.Writer, env []string, args ...string) ([]byte, error) {
+func (tail *stderrTail) String() string {
+	tail.mu.Lock()
+	defer tail.mu.Unlock()
+	message := strings.TrimSpace(string(tail.data))
+	if tail.truncated {
+		message = fmt.Sprintf("[stderr truncated; showing last %d bytes]\n%s", stderrLimit, message)
+	}
+	return message
+}
+
+func processCommand(ctx context.Context, dir string, env []string, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
-	cmd.Dir, cmd.Stdin = dir, input
+	cmd.Dir = dir
+	if env != nil {
+		cmd.Env = env
+	}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	return cmd
+}
+
+func process(ctx context.Context, dir string, input io.Reader, output io.Writer, env []string, args ...string) ([]byte, error) {
+	cmd := processCommand(ctx, dir, append(os.Environ(), env...), args...)
+	cmd.Stdin = input
 	var buffer bytes.Buffer
 	if output == nil {
 		output = &buffer
 	}
 	cmd.Stdout = output
-	if len(env) != 0 {
-		cmd.Env = append(os.Environ(), env...)
-	}
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	var stderr stderrTail
 	cmd.Stderr = &stderr
 	err := cmd.Run()
@@ -466,11 +498,7 @@ func process(ctx context.Context, dir string, input io.Reader, output io.Writer,
 		if cmd.ProcessState == nil {
 			return nil, fmt.Errorf("program %q could not start: %w; install it or correct the program name", args[0], err)
 		}
-		message := strings.TrimSpace(string(stderr.data))
-		if stderr.truncated {
-			message = fmt.Sprintf("[stderr truncated; showing last %d bytes]\n%s", stderrLimit, message)
-		}
-		return nil, fmt.Errorf("program %q: %w: %s", args[0], err, message)
+		return nil, fmt.Errorf("program %q: %w: %s", args[0], err, &stderr)
 	}
 	return buffer.Bytes(), nil
 }

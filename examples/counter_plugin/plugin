@@ -1,0 +1,5 @@
+name: counter
+version: "1"
+doc: Count calls using a program that stays running.
+accesses: [Keeps its counter in memory.]
+process: [python3, counter.py]

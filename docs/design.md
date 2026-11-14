@@ -44,7 +44,7 @@ Types are names, checked when connecting:
 
 - A capital letter in a description (`T`, `U`) stands for "the same type wherever this letter appears" in that one use of the node.
 - Where a type is `any` or an unstated `object`, the connection is allowed and shown as unchecked. The value is checked against what the consumer expects before the consumer starts, and a node's outputs are checked against its description when it returns.
-- Secret names and handles can be passed through workflows, boxes and control nodes as opaque references. A secret is turned into its real value only when the core calls a node that is not a workflow and declares a `secret` input; a control node that merely passes one along sees only the name. A secret named in a workflow but not stored is reported as a problem before anything runs. Records show secret inputs by name. If the node's outputs or error contain the value exactly, it is replaced by the name before anything is recorded or passed on; an encoded or transformed copy is not recognised, and a plugin is trusted code that can still send the value elsewhere.
+- Secret names and handles pass through workflows, boxes and control nodes as opaque references. The core resolves a secret for a non-workflow node's `secret` input or an explicit plugin launch binding; a control node sees only the name. Missing secrets are reported before the node or process starts. Records show input names. Exact secret values in outputs, errors or process diagnostics are replaced before display/recording; encoded or transformed copies are not recognised. Plugins are trusted code and can send values elsewhere.
 
 ## Workflow
 
@@ -103,14 +103,15 @@ One backend runs per project folder. The browser frontend and the command line a
 
 ## Plugins
 
-A plugin is a folder with a manifest (name, version, a description, what it says it accesses, and an optional setup command that prepares its own environment) and nodes. The contract:
+A plugin is a folder with a `plugin` manifest (`name`, `version`, `doc`, `accesses`, optional `setup`) and `.node` files. Optional `process` uses the same string/list argument rule as `setup`, without a shell; `env: {API_KEY: stored_key}` binds environment variables to secret names, shown before installation. Its working folder is the installed plugin folder; its environment contains PATH/HOME/TMPDIR/LANG plus these bindings.
 
-- **describe** returns the descriptions of its nodes and trigger kinds.
-- **run(node, inputs)** returns outputs or an error, with optional progress messages for display.
-- **Requests to the core** while running: call a node it was given, read or write a file, read or store its own secrets and small state.
-- **For a trigger kind:** activate a trigger with its settings, submit events, deactivate it. Events carry only plain data and files.
+One process starts on installation/backend startup, stays running, and stops on removal/replacement/shutdown: close stdin, wait briefly, then end its process group. Its nodes join the `.node` files as `plugin.node`. It reads requests on stdin and writes replies on stdout, one JSON object per line (replies up to 1 MiB), with string ids; stderr is bounded diagnostics. Only three messages:
 
-A node can be a description file plus a program (see "Writing a node"). Plugins that keep models loaded or call other nodes run as a long-lived process and must accept new runs while waiting on a call.
+- **describe:** `{"id":"1","method":"describe"}` → `{"id":"1","nodes":{"next":{"doc":"Advance counter.","inputs":{},"outputs":{"count":"number"}}}}`. Node descriptions use the usual ports and optional `no_outside_effect`, without `run`.
+- **run:** `{"id":"2","method":"run","node":"next","inputs":{},"dir":"/project/.inode/work/plugin-xyz"}` → `{"id":"2","outputs":{"count":1}}`, or `{"id":"2","error":"what went wrong"}`. Files must be closed before replying: a declared file leaf may be an absolute path inside `dir`; the host imports it before checking/publishing outputs, then removes `dir`. Existing stored references also work.
+- **cancel:** `{"id":"2","method":"cancel"}` asks the producer to stop that run. Reply once to the original run after work stops, for example `{"id":"2","error":"cancelled"}`; no separate cancel reply. The host retains `dir` until that reply or process exit and discards late outputs. Cancellation cannot undo outside actions.
+
+Keep reading while runs execute: replies may arrive out of order and ids identify their runs. Exit/unreadable stdout fails pending runs, warns they may or may not have finished, marks the process unavailable and makes checks report the reason on `use`; add the plugin again to recover. There is no automatic replay. Plugin-to-core requests, child calls, state, live objects and plugin triggers are not built yet.
 
 - **Discover:** an index that is only a list of names and URLs; no hosted service is required.
 - **Install:** always an explicit action, from a name, a git URL or a local path, after showing what the plugin says it accesses. A plugin is trusted code; nothing is enforced. Adding a plugin again replaces it. Each plugin gets its own process and environment, so plugins cannot break each other's dependencies.

@@ -12,28 +12,49 @@ import (
 )
 
 type Plugin struct {
-	Name     string   `json:"name" yaml:"name"`
-	Version  string   `json:"version" yaml:"version"`
-	Source   string   `json:"source,omitempty" yaml:"source,omitempty"`
-	Doc      string   `json:"doc,omitempty" yaml:"doc,omitempty"`
-	Accesses []string `json:"accesses,omitempty" yaml:"accesses,omitempty"`
-	Setup    any      `json:"setup,omitempty" yaml:"setup,omitempty"`
-	State    string   `json:"state,omitempty" yaml:"-"`
+	Name     string            `json:"name" yaml:"name"`
+	Version  string            `json:"version" yaml:"version"`
+	Source   string            `json:"source,omitempty" yaml:"source,omitempty"`
+	Doc      string            `json:"doc,omitempty" yaml:"doc,omitempty"`
+	Accesses []string          `json:"accesses,omitempty" yaml:"accesses,omitempty"`
+	Setup    any               `json:"setup,omitempty" yaml:"setup,omitempty"`
+	Process  any               `json:"process,omitempty" yaml:"process,omitempty"`
+	Env      map[string]string `json:"env,omitempty" yaml:"env,omitempty"`
+	State    string            `json:"state,omitempty" yaml:"-"`
+	Error    string            `json:"error,omitempty" yaml:"-"`
 }
 
-func (plugin Plugin) validate() error {
+func (plugin *Plugin) validate() error {
 	if !portName(plugin.Name) || !filepath.IsLocal(plugin.Name) || filepath.Base(plugin.Name) != plugin.Name {
 		return fmt.Errorf("rename plugin %q to a nonempty name without dots, equals signs or path separators", plugin.Name)
 	}
 	if plugin.Version == "" {
 		return fmt.Errorf("plugin %q: supply a version", plugin.Name)
 	}
-	if plugin.Setup != nil {
-		args, err := argumentList(plugin.Setup, "setup")
-		if err == nil {
-			_, err = arguments(args, nil, "setup", true)
+	for _, key := range []string{"setup", "process"} {
+		value := plugin.Setup
+		if key == "process" {
+			value = plugin.Process
 		}
-		return err
+		if value == nil {
+			continue
+		}
+		args, err := argumentList(value, key)
+		if err == nil {
+			_, err = arguments(args, nil, key, true)
+		}
+		if err != nil {
+			return err
+		}
+		if key == "process" {
+			argv, _ := arguments(args, nil, key, false)
+			plugin.Process, _ = jsonData[any](argv)
+		}
+	}
+	for name, secret := range plugin.Env {
+		if plugin.Process == nil || name == "" || strings.ContainsAny(name, "=\x00") || secret == "" || !filepath.IsLocal(secret) || filepath.Base(secret) != secret {
+			return fmt.Errorf("env.%s: bind an environment variable to a stored secret name for process", name)
+		}
 	}
 	return nil
 }
@@ -64,10 +85,17 @@ func (p *Project) loadPlugins() error {
 		err := readYAML(filepath.Join(p.pluginDir(plugin.Name), "plugin"), &installed)
 		p.plugins[i].State = "missing"
 		if err == nil && installed.Name == plugin.Name && installed.Version == plugin.Version {
-			p.plugins[i].State = "installed"
-			p.plugins[i].Doc, p.plugins[i].Accesses = installed.Doc, installed.Accesses
+			if err := installed.validate(); err != nil {
+				p.plugins[i].State, p.plugins[i].Error = "unavailable", fmt.Sprintf("Plugin %q is unavailable (%v). Add the plugin again.", plugin.Name, err)
+				continue
+			}
+			installed.Source, installed.State = plugin.Source, "installed"
+			p.plugins[i] = installed
 			if err := p.loadNodes(filepath.Join(p.pluginDir(plugin.Name), "nodes"), plugin.Name+"."); err != nil {
 				return err
+			}
+			if installed.Process != nil {
+				p.attachProcess(&p.plugins[i])
 			}
 		}
 	}
@@ -79,6 +107,9 @@ func (p *Project) lookup(name string) Node {
 		return node
 	}
 	for _, plugin := range p.plugins {
+		if plugin.State == "unavailable" && strings.HasPrefix(name, plugin.Name+".") {
+			return Node{Name: name, problem: fmt.Errorf("%s", plugin.Error)}
+		}
 		if plugin.State == "missing" && strings.HasPrefix(name, plugin.Name+".") {
 			return Node{Name: name, problem: fmt.Errorf("plugin %q version %s is listed but not installed; run inode add %s",
 				plugin.Name, plugin.Version, plugin.Source)}
@@ -159,6 +190,16 @@ func (p *Project) Add(ctx context.Context, source string, out io.Writer) error {
 			return err
 		}
 	}
+	if plugin.Process != nil {
+		if _, err := fmt.Fprintf(out, "Program: %s\n", commandText(plugin.Process.([]any))); err != nil {
+			return err
+		}
+		for _, key := range keys(plugin.Env) {
+			if _, err := fmt.Fprintf(out, "%s from secret %s\n", key, plugin.Env[key]); err != nil {
+				return err
+			}
+		}
+	}
 	if err := p.remove(plugin.Name); err != nil {
 		return err
 	}
@@ -180,6 +221,11 @@ func (p *Project) Add(ctx context.Context, source string, out io.Writer) error {
 		os.RemoveAll(destination)
 		return err
 	}
+	if p.host != nil {
+		p.host.mu.Lock()
+		delete(p.host.processes, plugin.Name)
+		p.host.mu.Unlock()
+	}
 	return p.load()
 }
 
@@ -193,6 +239,13 @@ func (p *Project) Remove(name string) error {
 }
 
 func (p *Project) remove(name string) error {
+	if p.host != nil {
+		p.host.mu.Lock()
+		if process := p.host.processes[name]; process != nil {
+			process.close()
+		}
+		p.host.mu.Unlock()
+	}
 	if err := os.RemoveAll(p.pluginDir(name)); err != nil {
 		return err
 	}

@@ -138,7 +138,7 @@ func command(ctx context.Context, args []string, out, diagnostic io.Writer) erro
 		columns := map[string][]func(any) any{
 			"nodes":        {field("name"), field("doc")},
 			"runs":         {field("id"), field("node"), field("state"), startedBy},
-			"plugins":      {field("name"), field("version"), field("state"), field("source")},
+			"plugins":      {field("name"), field("version"), field("state"), field("source"), field("error")},
 			"trigger list": {field("name"), triggerInstruction, field("state"), runField("current"), field("waiting"), runField("last"), runField("last_failure"), field("error")},
 			"secret list":  {func(row any) any { return row }},
 		}[operation]

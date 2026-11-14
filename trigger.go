@@ -89,7 +89,7 @@ func (p *Project) triggerPlan(name string, flow *Workflow) (*plan, Values, error
 }
 
 func (b *backend) project() (*Project, error) {
-	p, err := Open(b.dir)
+	p, err := openProject(b.dir, b.host)
 	if err == nil {
 		p.mu, p.publish = &b.mu, b.publish
 	}
