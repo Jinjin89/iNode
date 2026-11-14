@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Dialog, Field, useReply } from './Canvas';
 import { call, op } from './client';
 import { commandText } from './model';
@@ -10,9 +10,10 @@ function Details({ plugin }) {
 }
 
 function Inspection({ draft, setDraft, change, pending, showSecrets }) {
-  const [checked, setChecked] = useState(null), [error, setError] = useState('');
-  const receive = useCallback(plugin => setChecked({ draft, plugin }), [draft]);
-  useReply(op['plugins inspect'], [draft], receive, setError);
+  const [checked, setChecked] = useState(null), [error, setError] = useState(''), [settled, setSettled] = useState(draft);
+  useEffect(() => { const timer = setTimeout(() => setSettled(draft), 300); return () => clearTimeout(timer); }, [draft]);
+  const receive = useCallback(plugin => setChecked({ draft: settled, plugin }), [settled]);
+  useReply(op['plugins inspect'], [settled], receive, setError);
   const plugin = checked?.plugin, prepared = plugin?.preparation, ready = checked?.draft === draft && !error && !plugin?.error;
   const edit = (name, value) => setDraft({ ...draft, [name]: value });
   return <Dialog className="run-inputs screen-form" label="Install plugin?" onClose={() => setDraft(null)}><form onSubmit={event => { event.preventDefault(); if (ready && plugin?.name) { change(op.add, draft, plugin); setDraft(null); } }}>
@@ -66,7 +67,7 @@ export function Plugins({ catalog, setCatalog, perform, pending, ask, fail, log,
     } } catch (error) { setSourceError(error.message); }
   }, 'plugin inspect');
   return <section className="plugins">
-    <h1>Plugins</h1><p>Plugins add nodes to your project. Enter a folder, a git URL or an MCP server command to see what it will do before installing.</p>
+    <h1>Plugins</h1><p>Plugins add nodes to your project. Enter a folder, a git URL, an MCP server command or an OpenAPI document’s file or URL to see what it will do before installing.</p>
     <form className="screen-form" onSubmit={event => { event.preventDefault(); inspectSource(source); }}>
       <header className="form-heading"><h2>Add a plugin</h2><button className="primary" disabled={pending.includes('plugin inspect') || adding} type="submit">{pending.includes('plugin inspect') ? 'Inspecting…' : adding ? 'Installing…' : 'Add plugin'}</button></header><div className="row"><label>Plugin source<input aria-label="Plugin source" value={source} onChange={event => setSource(event.target.value)} required /></label>
       </div>

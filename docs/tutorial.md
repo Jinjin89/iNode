@@ -114,7 +114,7 @@ The workflow now gives back only the first greeting.
 - Read what the plugin says it accesses.
 - Click **Install plugin** to confirm.
 
-Its nodes appear in the node list. An MCP server is a plugin; paste its command here to use its tools as ordinary nodes. Any program that reads and prints JSON (named values written as text) can be a node. Enter a path for a file input; use `file.save` to copy a returned file where you want it.
+Its nodes appear in the node list. An MCP server's command or an OpenAPI document's address pasted here is a plugin too, with its tools or operations as ordinary nodes. Any program that reads and prints JSON (named values written as text) can be a node. Enter a path for a file input; use `file.save` to copy a returned file where you want it.
 
 ## The same from the command line
 ```sh

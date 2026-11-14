@@ -4,10 +4,11 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"mime"
 	"net/url"
 	"os"
 	"path/filepath"
+
+	"inode/adapters"
 )
 
 func content(ctx context.Context, result object, dir string) (object, error) {
@@ -54,10 +55,6 @@ func content(ctx context.Context, result object, dir string) (object, error) {
 			return nil, fmt.Errorf("server returned invalid base64 content")
 		}
 		typ, _ := binary["mimeType"].(string)
-		ext := ".bin"
-		if extensions, _ := mime.ExtensionsByType(typ); len(extensions) > 0 {
-			ext = extensions[0]
-		}
 		name, _ := binary["name"].(string)
 		if uri, _ := binary["uri"].(string); name == "" && uri != "" {
 			if parsed, err := url.Parse(uri); err == nil {
@@ -65,7 +62,7 @@ func content(ctx context.Context, result object, dir string) (object, error) {
 			}
 		}
 		if name == "" || name == "." || name == "/" {
-			name = fmt.Sprint(block["type"]) + ext
+			name = fmt.Sprint(block["type"]) + adapters.Extension(typ)
 		}
 		path := filepath.Join(dir, fmt.Sprintf("%d-%s", len(files)+1, filepath.Base(name)))
 		if err := ctx.Err(); err != nil {

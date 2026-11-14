@@ -1,4 +1,4 @@
-package mcp
+package adapters
 
 import (
 	"encoding/json"
@@ -25,7 +25,7 @@ func TestProjection(t *testing.T) {
 		{`{"$ref":"https://example.invalid/schema"}`, "any", false},
 		{`{"$ref":"#/$defs/recursive","$defs":{}}`, "any", false},
 	} {
-		var schema object
+		var schema Object
 		if err := json.Unmarshal([]byte(test.schema), &schema); err != nil {
 			t.Fatal(err)
 		}
@@ -33,7 +33,7 @@ func TestProjection(t *testing.T) {
 			t.Fatalf("%s: %s, named=%t", test.schema, got, closed(schema))
 		}
 	}
-	if escape("a.b=%猫") != "a%2Eb%3D%25%E7%8C%AB" || escape("a%2Eb") == escape("a.b") {
+	if Escape("a.b=%猫") != "a%2Eb%3D%25%E7%8C%AB" || Escape("a%2Eb") == Escape("a.b") {
 		t.Fatal("tool names must escape reversibly without collisions")
 	}
 }

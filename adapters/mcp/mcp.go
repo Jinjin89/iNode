@@ -1,7 +1,6 @@
 package mcp
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -10,12 +9,15 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"slices"
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"inode/adapters"
 )
+
+type object = adapters.Object
 
 const modern, legacy, clientVersion = "2026-07-28", "2025-11-25", "dev"
 
@@ -188,7 +190,7 @@ func (p *peer) catalog(ctx context.Context) (map[string]object, map[string]objec
 				return nil, nil, fmt.Errorf("invalid tool description")
 			}
 			name, _ := tool["name"].(string)
-			key := escape(name)
+			key := adapters.Escape(name)
 			if name == "" || tools[key] != nil || len(tools) >= 10000 {
 				return nil, nil, fmt.Errorf("tools need distinct nonempty names; at most 10000 tools")
 			}
@@ -196,18 +198,11 @@ func (p *peer) catalog(ctx context.Context) (map[string]object, map[string]objec
 			if !ok {
 				return nil, nil, fmt.Errorf("tool %s needs an inputSchema object", name)
 			}
-			inputs := object{"arguments": "object"}
-			if closed(schema) {
-				inputs = object{}
-				properties, _ := schema["properties"].(object)
-				for field, value := range properties {
-					inputs[field] = project(value, 0)
-				}
-			}
+			inputs, named := adapters.Inputs(schema)
 			response := "object"
 			output, structured := tool["outputSchema"]
 			if structured {
-				response = "object{content: list of object, structuredContent: " + project(output, 0) + "}"
+				response = "object{content: list of object, structuredContent: " + adapters.Project(output) + "}"
 			}
 			doc, _ := tool["description"].(string)
 			if unsupported(tool) {
@@ -215,7 +210,7 @@ func (p *peer) catalog(ctx context.Context) (map[string]object, map[string]objec
 			}
 			raw, _ := json.Marshal(schema)
 			nodes[key] = object{"doc": doc + "\nMCP tool: " + name + "\nInput schema: " + string(raw), "inputs": inputs, "outputs": object{"result": "object{response: " + response + ", files: list of file}"}}
-			tools[key] = object{"name": name, "named": closed(schema), "structured": structured, "unsupported": unsupported(tool)}
+			tools[key] = object{"name": name, "named": named, "structured": structured, "unsupported": unsupported(tool)}
 		}
 		catalogData, _ := json.Marshal(nodes)
 		if len(catalogData) > 1<<20 {
@@ -244,13 +239,9 @@ func (p *peer) run(ctx context.Context, tool object, inputs object, dir string) 
 	if tool["unsupported"] == true {
 		return nil, fmt.Errorf("task-only tools and MCP Apps are unsupported")
 	}
-	args := inputs
-	if tool["named"] != true {
-		var ok bool
-		args, ok = inputs["arguments"].(object)
-		if !ok {
-			return nil, fmt.Errorf("arguments must be an object")
-		}
+	args, err := adapters.Arguments(inputs, tool["named"] == true)
+	if err != nil {
+		return nil, err
 	}
 	result, err := p.call(ctx, "tools/call", object{"name": tool["name"], "arguments": args})
 	if err != nil {
@@ -275,8 +266,6 @@ func Serve(ctx context.Context, args []string, in *os.File, out, diagnostic io.W
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	defer in.Close()
-	var workers sync.WaitGroup
-	defer workers.Wait()
 	p := &peer{pending: map[string]chan message{}, done: make(chan struct{}), version: modern}
 	p.cmd = exec.CommandContext(ctx, args[0], args[1:]...)
 	p.cmd.Stdout, p.cmd.Stderr, p.cmd.WaitDelay = p, diagnostic, 250*time.Millisecond
@@ -318,98 +307,17 @@ func Serve(ctx context.Context, args []string, in *os.File, out, diagnostic io.W
 	if err != nil {
 		return err
 	}
-	dir, _ := os.Getwd()
-	plugin := filepath.Base(dir)
-	var mu, writer sync.Mutex
-	active := map[string]context.CancelFunc{}
-	reply := func(id string, value object, err error) {
-		writer.Lock()
-		defer writer.Unlock()
-		result := object{"id": id}
-		if err != nil {
-			text := err.Error()
-			if len(text) > 8192 {
-				text = text[:8192] + " [truncated]"
-			}
-			result["error"] = text
-		} else {
-			for key, value := range value {
-				result[key] = value
-			}
+	err = adapters.Serve(ctx, in, out, p.done, nodes, func(ctx context.Context, node string, inputs object, dir string) (object, error) {
+		tool := tools[node]
+		if tool == nil {
+			return nil, fmt.Errorf("unknown tool")
 		}
-		data, _ := json.Marshal(result)
-		if len(data) > 1<<20 {
-			data, _ = json.Marshal(object{"id": id, "error": "plugin reply exceeds 1 MiB; use files for large content"})
-		}
-		fmt.Fprintf(out, "%s\n", data)
-	}
-	scanner := bufio.NewScanner(in)
-	scanner.Buffer(make([]byte, 4096), 1<<20)
-	type hostRequest struct {
-		ID, Method, Node, Dir string
-		Inputs                object
-	}
-	requests, ended := make(chan hostRequest), make(chan error, 1)
-	go func() {
-		for scanner.Scan() {
-			var request hostRequest
-			if err := json.Unmarshal(scanner.Bytes(), &request); err != nil {
-				ended <- err
-				return
-			}
-			select {
-			case requests <- request:
-			case <-p.done:
-				return
-			}
-		}
-		ended <- scanner.Err()
-	}()
-	for {
-		var request hostRequest
-		select {
-		case request = <-requests:
-		case err := <-ended:
-			return err
-		case <-p.done:
-			return p.err
-		}
-		switch request.Method {
-		case "describe":
-			reply(request.ID, object{"nodes": nodes}, nil)
-		case "cancel":
-			mu.Lock()
-			if stop := active[request.ID]; stop != nil {
-				stop()
-			}
-			mu.Unlock()
-		case "run":
-			runCtx, stop := context.WithCancel(ctx)
-			mu.Lock()
-			active[request.ID] = stop
-			mu.Unlock()
-			workers.Add(1)
-			go func() {
-				defer workers.Done()
-				defer stop()
-				tool := tools[request.Node]
-				var outputs object
-				var err error
-				if tool == nil {
-					err = fmt.Errorf("unknown tool")
-				} else {
-					outputs, err = p.run(runCtx, tool, request.Inputs, request.Dir)
-				}
-				if err != nil {
-					err = fmt.Errorf("%s.%s: %w", plugin, request.Node, err)
-				}
-				mu.Lock()
-				delete(active, request.ID)
-				mu.Unlock()
-				reply(request.ID, object{"outputs": outputs}, err)
-			}()
-		default:
-			return fmt.Errorf("unsupported host method %q", request.Method)
-		}
+		return p.run(ctx, tool, inputs, dir)
+	})
+	select {
+	case <-p.done:
+		return p.err
+	default:
+		return err
 	}
 }

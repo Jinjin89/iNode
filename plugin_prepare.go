@@ -3,23 +3,26 @@ package inode
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"unicode"
 )
 
-var CommandPlugin func([]string) (process []string, doc, label string, err error)
+// Adapters make a process plugin from a source that is not a plugin folder or git URL; the application lists them, most specific first.
+var Adapters []Adapter
 
-type Source struct {
-	Source string            `json:"source"`
-	Kind   string            `json:"kind,omitempty"`
-	Name   string            `json:"name,omitempty"`
-	Env    map[string]string `json:"env,omitempty"`
+// Plugin drafts a manifest (name, doc, accesses, process and suggested env) with the adapter's own editable fields.
+// Until input has its kind it returns no manifest unless the source is certainly its own.
+type Adapter struct {
+	Kind, Label string
+	Plugin      func(dir string, input Values) (Values, []Editable, error)
 }
 
 type Prepared struct {
-	Input      Source     `json:"input"`
+	Input      Values     `json:"input"`
 	Editable   []Editable `json:"editable,omitempty"`
 	Manifest   Values     `json:"manifest,omitempty"`
 	Directory  string     `json:"directory,omitempty"`
@@ -35,87 +38,79 @@ type Editable struct {
 	Choices map[string]string `json:"choices,omitempty"`
 }
 
+// LocalPath expands ~/ and places a relative path in dir.
+func LocalPath(dir, path string) string {
+	if home, _ := os.UserHomeDir(); strings.HasPrefix(path, "~/") {
+		path = filepath.Join(home, path[2:])
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(dir, path)
+	}
+	return path
+}
+
 func prepareSource(dir string, value any) (Prepared, error) {
-	input := Source{}
-	if source, ok := value.(string); ok {
-		input.Source = source
-	} else {
-		data, _ := json.Marshal(value)
-		decoder := json.NewDecoder(strings.NewReader(string(data)))
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&input); err != nil {
-			return Prepared{}, err
+	input, ok := value.(Values)
+	if !ok {
+		input = Values{"source": value}
+	}
+	source, _ := input["source"].(string)
+	kind, _ := input["kind"].(string)
+	result := Prepared{Input: maps.Clone(input)}
+	if info, _ := os.Stat(LocalPath(dir, source)); info != nil && info.IsDir() && (kind == "" || kind == "plugin") {
+		result.Input["source"] = LocalPath(dir, source)
+		return result, nil
+	}
+	address := !strings.ContainsFunc(source, unicode.IsSpace) && (strings.HasSuffix(strings.Split(source, "#")[0], ".git") || slices.ContainsFunc([]string{"git@", "git://", "ssh://", "file://"}, func(prefix string) bool { return strings.HasPrefix(source, prefix) }))
+	var manifest Values
+	var fields []Editable
+	choices := map[string]string{"plugin": "Plugin folder or git URL"}
+	for _, adapter := range Adapters {
+		choices[adapter.Kind] = adapter.Label
+		if manifest != nil || kind == "" && address || kind != "" && kind != adapter.Kind {
+			continue
+		}
+		var err error
+		if manifest, fields, err = adapter.Plugin(dir, input); err != nil {
+			return result, err
+		}
+		if manifest != nil {
+			result.Input["kind"] = adapter.Kind
 		}
 	}
-	result := Prepared{Input: input}
-	local := input.Source
-	home, _ := os.UserHomeDir()
-	if strings.HasPrefix(local, "~/") {
-		local = filepath.Join(home, local[2:])
-	}
-	if !filepath.IsAbs(local) {
-		local = filepath.Join(dir, local)
-	}
-	info, _ := os.Stat(local)
-	folder := info != nil && info.IsDir()
-	space := strings.ContainsFunc(input.Source, unicode.IsSpace)
-	git := !space && (strings.HasPrefix(input.Source, "git@") || strings.Contains(input.Source, "://") || strings.HasSuffix(strings.Split(input.Source, "#")[0], ".git"))
-	if input.Kind == "plugin" || input.Kind == "" && (folder || git) {
-		if folder {
-			result.Input.Source = local
+	if manifest == nil {
+		if choices[kind] == "" && kind != "" {
+			return result, fmt.Errorf("choose one of the listed source types")
+		}
+		if kind == "" && !address && !strings.Contains(source, "://") {
+			result.Message = "Choose how to use this source."
+			result.Editable = []Editable{{Name: "kind", Label: "Source type", Kind: "choice", Choices: choices}}
 		}
 		return result, nil
 	}
-	if input.Kind != "" && input.Kind != "command" {
-		return result, fmt.Errorf("choose plugin or command")
-	}
-	args, err := splitCommand(input.Source)
-	if err != nil {
-		return result, err
-	}
-	if len(args) == 0 || args[0] == "" || strings.Contains(args[0], "://") {
-		return result, fmt.Errorf("supply a local program command, not a URL")
-	}
-	if strings.ContainsRune(args[0], os.PathSeparator) && !filepath.IsAbs(args[0]) {
-		args[0] = filepath.Join(dir, args[0])
-	}
-	if CommandPlugin == nil {
-		return result, fmt.Errorf("command plugins are unavailable in this application")
-	}
-	process, doc, label, err := CommandPlugin(args)
-	if err != nil {
-		return result, err
-	}
-	if input.Kind == "" && !space {
-		result.Message = "Choose how to use this source."
-		result.Editable = []Editable{{Name: "kind", Label: "Source type", Kind: "choice", Choices: map[string]string{"plugin": "Plugin folder or git URL", "command": label}}}
-		return result, nil
-	}
-	if input.Name == "" {
-		input.Name = strings.TrimSuffix(filepath.Base(args[0]), filepath.Ext(args[0]))
-		for _, arg := range args {
-			if _, name, found := strings.Cut(arg, "server-"); found {
-				input.Name = name
-				break
-			}
-		}
-		input.Name = strings.Map(func(c rune) rune {
+	name, _ := input["name"].(string)
+	if name == "" {
+		name, _ = manifest["name"].(string)
+		name = strings.Map(func(c rune) rune {
 			if unicode.IsLetter(c) || unicode.IsDigit(c) || c == '_' || c == '-' {
 				return c
 			}
 			return '-'
-		}, input.Name)
+		}, name)
 	}
+	process, _ := manifest["process"].([]string)
 	for i, arg := range process {
 		if strings.HasPrefix(arg, "=") {
 			process[i] = "=" + arg
 		}
 	}
-	result.Directory, result.WorkingDir = filepath.Join(dir, input.Name), filepath.Join(dir, ".inode", "plugins", input.Name)
-	result.Manifest = Values{"name": input.Name, "version": "1", "doc": doc, "accesses": []string{"Runs a local program with this user's permissions; finer access claims are not verified."}, "process": process, "env": input.Env}
-	result.Input.Kind = "command"
-	result.Input.Name = input.Name
-	result.Editable = []Editable{{Name: "name", Label: "Plugin name", Kind: "text", Value: input.Name}, {Name: "env", Label: "Environment variables", Kind: "bindings", Value: input.Env}}
+	env := manifest["env"]
+	if input["env"] != nil {
+		env = input["env"]
+	}
+	manifest["name"], manifest["version"], manifest["env"] = name, "1", input["env"]
+	result.Input["name"], result.Manifest, result.Directory, result.WorkingDir = name, manifest, filepath.Join(dir, name), filepath.Join(dir, ".inode", "plugins", name)
+	result.Editable = append(append([]Editable{{Name: "name", Label: "Plugin name", Kind: "text", Value: name}}, fields...), Editable{Name: "env", Label: "Environment variables", Kind: "bindings", Value: env})
 	return result, nil
 }
 
@@ -134,7 +129,7 @@ func (p Prepared) Write() (string, error) {
 	return p.Directory, nil
 }
 
-func splitCommand(text string) ([]string, error) {
+func SplitCommand(text string) ([]string, error) {
 	home, _ := os.UserHomeDir()
 	args, word, quote, escaped, started := []string{}, strings.Builder{}, rune(0), false, false
 	finish := func() {

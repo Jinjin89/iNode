@@ -2,20 +2,73 @@ package inode
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"unicode"
 )
 
 func commandPlugins(t *testing.T) {
 	t.Helper()
-	previous := CommandPlugin
-	CommandPlugin = func(args []string) ([]string, string, string, error) {
-		return append([]string{"bridge", "--"}, args...), "Tools from " + args[0], "Tool server command", nil
+	previous := Adapters
+	Adapters = []Adapter{{"spec", "Service description", func(dir string, input Values) (Values, []Editable, error) {
+		source := input["source"].(string)
+		if !strings.HasSuffix(source, ".yaml") {
+			if input["kind"] != nil {
+				return nil, nil, fmt.Errorf("supply a .yaml description")
+			}
+			return nil, nil, nil
+		}
+		address, _ := input["address"].(string)
+		return Values{"name": source, "doc": "Calls from " + source, "process": []string{"caller", source, address}, "env": Values{"TOKEN": ""}}, []Editable{{Name: "address", Label: "Address", Kind: "text", Value: address}}, nil
+	}}, {"command", "Tool server command", func(dir string, input Values) (Values, []Editable, error) {
+		source := input["source"].(string)
+		if input["kind"] == nil && !strings.ContainsFunc(source, unicode.IsSpace) {
+			return nil, nil, nil
+		}
+		args, err := SplitCommand(source)
+		if err != nil {
+			return nil, nil, err
+		}
+		return Values{"name": args[0], "doc": "Tools from " + args[0], "process": append([]string{"bridge", "--"}, args...)}, nil, nil
+	}}}
+	t.Cleanup(func() { Adapters = previous })
+}
+
+func TestAdapterSources(t *testing.T) {
+	commandPlugins(t)
+	dir := t.TempDir()
+	for _, source := range []string{"api.yaml", "my api.yaml"} {
+		draft, err := prepareSource(dir, source)
+		if err != nil || draft.Input["kind"] != "spec" || len(draft.Editable) != 3 || draft.Editable[1].Name != "address" || draft.Manifest["env"] != nil || !reflect.DeepEqual(draft.Editable[2].Value, Values{"TOKEN": ""}) {
+			t.Fatalf("the first adapter certain of a source drafts it, with its own field and suggested bindings: %+v, %v", draft, err)
+		}
 	}
-	t.Cleanup(func() { CommandPlugin = previous })
+	edited, err := prepareSource(dir, Values{"source": "api.yaml", "kind": "spec", "address": "=here", "env": Values{"TOKEN": "stored"}})
+	if err != nil || edited.Manifest["name"] != "api-yaml" || !reflect.DeepEqual(edited.Manifest["process"], []string{"caller", "api.yaml", "==here"}) || !reflect.DeepEqual(edited.Manifest["env"], Values{"TOKEN": "stored"}) {
+		t.Fatalf("edited adapter field: %+v, %v", edited, err)
+	}
+	unsure, err := prepareSource(dir, "word")
+	if err != nil || unsure.Manifest != nil || !reflect.DeepEqual(unsure.Editable[0].Choices, map[string]string{"plugin": "Plugin folder or git URL", "spec": "Service description", "command": "Tool server command"}) {
+		t.Fatalf("a source no adapter is certain of must ask: %+v, %v", unsure, err)
+	}
+	if plugin, err := prepareSource(dir, Values{"source": "api.yaml", "kind": "plugin"}); err != nil || len(plugin.Editable) != 0 {
+		t.Fatalf("a chosen plugin is not offered to adapters: %+v, %v", plugin, err)
+	}
+	for _, source := range []string{"git@host:api.yaml", "ssh://host/api.yaml", "file:///api.yaml", "https://host/api.yaml#v1.git"} {
+		if address, err := prepareSource(dir, source); err != nil || len(address.Editable) != 0 {
+			t.Fatalf("a source that reads as a git address is not offered to adapters: %+v, %v", address, err)
+		}
+	}
+	if _, err := prepareSource(dir, Values{"source": "word", "kind": "spec"}); err == nil || !strings.Contains(err.Error(), "supply a .yaml") {
+		t.Fatalf("the chosen adapter must explain: %v", err)
+	}
+	if _, err := prepareSource(dir, Values{"source": "word", "kind": "other"}); err == nil || !strings.Contains(err.Error(), "listed source types") {
+		t.Fatalf("unknown kind: %v", err)
+	}
 }
 
 func TestCommandPreparation(t *testing.T) {
@@ -34,7 +87,7 @@ func TestCommandPreparation(t *testing.T) {
 		{`tool "$(touch marker)"`, nil, "substitution"},
 		{`tool 'unfinished`, nil, "quoted word"},
 	} {
-		args, err := splitCommand(test.line)
+		args, err := SplitCommand(test.line)
 		if test.problem != "" {
 			if err == nil || !strings.Contains(err.Error(), test.problem) {
 				t.Fatalf("%s: %v", test.line, err)
@@ -45,8 +98,8 @@ func TestCommandPreparation(t *testing.T) {
 			t.Fatalf("%s: %q, %v", test.line, args, err)
 		}
 	}
-	draft, err := prepareSource(dir, `runner -y @tools/server-filesystem ~/docs`)
-	if err != nil || draft.Manifest["name"] != "filesystem" || draft.Directory != filepath.Join(dir, "filesystem") {
+	draft, err := prepareSource(dir, `my.runner -y @tools/server-filesystem ~/docs`)
+	if err != nil || draft.Manifest["name"] != "my-runner" || draft.Directory != filepath.Join(dir, "my-runner") {
 		t.Fatalf("draft: %+v, %v", draft, err)
 	}
 	if _, err := os.Stat(draft.Directory); !os.IsNotExist(err) {
@@ -57,12 +110,12 @@ func TestCommandPreparation(t *testing.T) {
 		t.Fatalf("argv: %q", args)
 	}
 	bare, err := prepareSource(dir, "filesystem")
-	if err != nil || len(bare.Editable[0].Choices) != 2 || bare.Manifest != nil {
+	if err != nil || len(bare.Editable[0].Choices) != 3 || bare.Manifest != nil {
 		t.Fatalf("bare source must ask: %+v, %v", bare, err)
 	}
 	for _, source := range []string{"https://example.invalid/tools", "ssh://host/tools.git#main", "git@host:tools", "file:///tmp/repo"} {
 		prepared, err := prepareSource(dir, source)
-		if err != nil || len(prepared.Editable) != 0 || prepared.Input.Source != source {
+		if err != nil || len(prepared.Editable) != 0 || prepared.Input["source"] != source {
 			t.Fatalf("git source: %+v, %v", prepared, err)
 		}
 	}
@@ -76,11 +129,11 @@ func TestCommandPreparation(t *testing.T) {
 		t.Fatal(err)
 	}
 	overlap, err := prepareSource(dir, "a folder")
-	if err != nil || overlap.Manifest != nil || overlap.Input.Source != filepath.Join(dir, "a folder") {
+	if err != nil || overlap.Manifest != nil || overlap.Input["source"] != filepath.Join(dir, "a folder") {
 		t.Fatalf("existing folder must stay a plugin: %+v, %v", overlap, err)
 	}
 	explicit, err := prepareSource(dir, Values{"source": "a folder", "kind": "plugin"})
-	if err != nil || explicit.Manifest != nil || explicit.Input.Source != filepath.Join(dir, "a folder") {
+	if err != nil || explicit.Manifest != nil || explicit.Input["source"] != filepath.Join(dir, "a folder") {
 		t.Fatalf("explicit folder: %+v, %v", explicit, err)
 	}
 	choice, err := prepareSource(dir, Values{"source": "server", "kind": "command", "name": "edited", "env": Values{"API_KEY": "stored"}})

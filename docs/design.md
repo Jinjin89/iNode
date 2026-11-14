@@ -121,7 +121,7 @@ Keep reading while runs execute: replies may arrive out of order and ids identif
 
 1. **Command-line tools.** Ordinary `.node` descriptions bind arguments, flags, stdin, stdout and environment without a shell. File bindings follow with the managed file store; wrapping ffmpeg or pandoc then needs only a description.
 2. **MCP servers.** Paste a server command into Plugins, edit the name and secret bindings, then confirm the ordinary plugin that runs `inode mcp -- <server command>`. Each tool becomes a node with conservative schema-derived ports and `result: {response, files}` (text/structured data and stored media); Add again rediscovers tools.
-3. **OpenAPI.** Each operation becomes a node. This gives API calls, not finished integrations; paging, polling and sign-in are built on top as workflows.
+3. **OpenAPI.** Paste an OpenAPI 3 document's file or URL into Plugins, edit the name, base URL and secret bindings, then confirm the ordinary plugin that runs `inode openapi -- <document> <base URL>`. Each operation becomes a node with schema-derived ports and `result: {status, body, files}`; these are API calls, not finished integrations, so paging, polling and sign-in are built on top as workflows.
 4. **Library functions.** Signature to ports, as scaffolding for functions that already fit.
 5. **ComfyUI.** One node submits a whole graph to a running ComfyUI server and returns its output files. Hosting individual ComfyUI nodes is not planned.
 6. **n8n nodes.** Not adapted; they depend on n8n's item runtime and credentials. The same services are reached through OpenAPI or MCP.
@@ -203,6 +203,7 @@ These are deliberate. Each keeps the model small.
 | Formulas inside references | References select data by path only; computation is a node. |
 | Enforced limits on what a plugin can do | Plugins are trusted code; install only what you trust. |
 | Full MCP conformance | Stdio, 2026-07-28, and earlier revisions for tools only; schemas are projected to iNode types without full validation, which MCP requires clients to perform. No HTTP, input rounds, sampling, roots, resource operations, prompts/completion, tasks, Apps or push catalog updates. File arguments use the server's JSON contract; inline wire frames are buffered and limited to 8 MiB. |
+| Full OpenAPI coverage | OpenAPI 3 documents up to 8 MiB with local `$ref`s; an operation with any optional parameter takes one `arguments` object, and inputs are not validated against the schema. JSON request bodies only; JSON and text responses up to 8 MiB are data, other content becomes files, a status of 400 or above fails the run, and response headers are not returned. Only GET and HEAD are marked as having no outside effect. Credentials are http bearer/basic and header/query API keys, each read from the variable named after its security scheme; no OAuth flows, cookies or mutual TLS. |
 | Managing iNode from another machine | The backend serves the local machine only. |
 | Automatic removal of stored files | Archive/move whole projects including `.inode/`, or remove unneeded projects. Deleting blobs breaks run records. |
 | Importing n8n or ComfyUI workflow files | Adapters reuse their capabilities, not their formats. |

@@ -176,9 +176,11 @@ func (p *Project) preparePlugin(ctx context.Context, source any, install bool) (
 		return Plugin{}, "", err
 	}
 	if len(prepared.Editable) == 0 {
-		return p.fetchPlugin(ctx, prepared.Input.Source)
+		location, _ := prepared.Input["source"].(string)
+		return p.fetchPlugin(ctx, location)
 	}
-	plugin := Plugin{Preparation: &prepared, Source: prepared.Input.Name}
+	name, _ := prepared.Input["name"].(string)
+	plugin := Plugin{Preparation: &prepared, Source: name}
 	if prepared.Manifest != nil {
 		data, _ := json.Marshal(prepared.Manifest)
 		err = decode(data, &plugin)

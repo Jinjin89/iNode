@@ -20,17 +20,9 @@ import (
 	"go.yaml.in/yaml/v3"
 	"golang.org/x/term"
 	"inode"
-	"inode/adapters/mcp"
 )
 
 const usage = "usage: inode run <node> key=value ... | nodes | show <node> | check <workflow or JSON> | save <workflow> <version> <JSON> | runs [show|stop|follow|again <id>] | runs from <id> <step> [--start] | trigger add <kind> key=value ... run=<node> key=value ... | trigger list/on/off/remove/clear [name] | secret set <name> (prompt or stdin; one trailing line ending removed) | secret list | secret remove <name> | add <plugin source> | remove <plugin> | plugins [inspect <plugin source>] | start | stop | help | version"
-
-func init() {
-	inode.CommandPlugin = func(args []string) ([]string, string, string, error) {
-		executable, err := os.Executable()
-		return append([]string{executable, "mcp", "--"}, args...), "MCP tools from " + args[0], "MCP server command", err
-	}
-}
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -45,8 +37,8 @@ func command(ctx context.Context, args []string, out, diagnostic io.Writer) erro
 	if len(args) == 0 {
 		return fmt.Errorf("%s", usage)
 	}
-	if len(args) > 1 && args[0] == "mcp" && args[1] == "--" {
-		return mcp.Serve(ctx, args[2:], os.Stdin, out, diagnostic)
+	if program := adapterPrograms[args[0]]; program != nil && len(args) > 1 && args[1] == "--" {
+		return program(ctx, args[2:], os.Stdin, out, diagnostic)
 	}
 	if len(args) == 1 {
 		switch args[0] {
@@ -258,9 +250,7 @@ func confirmPlugin(ctx context.Context, client *inode.Client, source any, out, d
 			}
 			break
 		}
-		data, _ := json.Marshal(prepared.Input)
-		request := inode.Values{}
-		json.Unmarshal(data, &request)
+		request := maps.Clone(prepared.Input)
 		for _, field := range fields {
 			answered[field.Name] = true
 			switch field.Kind {
@@ -274,12 +264,18 @@ func confirmPlugin(ctx context.Context, client *inode.Client, source any, out, d
 				if bindings == nil {
 					bindings = map[string]any{}
 				}
+				suggested := slices.DeleteFunc(slices.Sorted(maps.Keys(bindings)), func(key string) bool { return bindings[key] != "" })
 				for {
-					key := ask(field.Label+" — variable name (blank to finish)", nil)
-					if key == "" {
+					var key string
+					if len(suggested) > 0 {
+						key, suggested = suggested[0], suggested[1:]
+					} else if key = ask(field.Label+" — variable name (blank to finish)", nil); key == "" {
 						break
 					}
-					name := ask("Stored secret name", nil)
+					name := ask("Stored secret name for "+key+" (blank to leave unset)", nil)
+					if delete(bindings, key); name == "" {
+						continue
+					}
 					if !slices.Contains(names, name) {
 						return nil, fmt.Errorf("store secret %q first with inode secret set", name)
 					}

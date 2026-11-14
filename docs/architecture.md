@@ -2,7 +2,7 @@
 
 How the model in `design.md` is built. This document follows the model and never the other way round: it may only use concepts defined there (node, run, trigger, plugin). If something here would require the user to learn a new idea, either `design.md` is changed on purpose or this document is simplified.
 
-**Built so far:** the core, boxes with `map`, `choose`, `repeat`, `retry` and `try`, bundled nodes including `file.save`, program text/file bindings, an immutable file store, folder/git and running-process plugins, the stdio MCP adapter, secrets, backend/command line, triggers with `schedule.every`, `schedule.daily` and `folder.new_file`, run from here, and Canvas, Runs, When, Plugins and Secrets. Not built yet: opening files from the page, "move into box", web-request/plugin trigger kinds, process callbacks/state/live objects, `agent`, plugin search.
+**Built so far:** the core, boxes with `map`, `choose`, `repeat`, `retry` and `try`, bundled nodes including `file.save`, program text/file bindings, an immutable file store, folder/git and running-process plugins, the stdio MCP and OpenAPI adapters, secrets, backend/command line, triggers with `schedule.every`, `schedule.daily` and `folder.new_file`, run from here, and Canvas, Runs, When, Plugins and Secrets. Not built yet: opening files from the page, "move into box", web-request/plugin trigger kinds, process callbacks/state/live objects, `agent`, plugin search.
 
 ## Shape
 

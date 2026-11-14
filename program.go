@@ -39,7 +39,7 @@ func CommandText(args []any) string {
 
 func argumentList(value any, key string) ([]any, error) {
 	if text, ok := value.(string); ok {
-		words, err := splitCommand(text)
+		words, err := SplitCommand(text)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w; use an argument list for literal shell characters", key, err)
 		}
