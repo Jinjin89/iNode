@@ -2,7 +2,7 @@
 
 How the model in `design.md` is built. This document follows the model and never the other way round: it may only use concepts defined there (node, run, trigger, plugin). If something here would require the user to learn a new idea, either `design.md` is changed on purpose or this document is simplified.
 
-**Built so far:** the core, boxes with `map`, `choose`, `repeat`, `retry`, `try` and `agent`, bundled nodes including `file.save`, program text/file bindings, an immutable file store, folder/git and running-process plugins, the stdio MCP and OpenAPI adapters, secrets, backend/command line, triggers with `schedule.every`, `schedule.daily` and `folder.new_file`, run from here, and Canvas, Runs, When, Plugins and Secrets. Not built yet: opening files from the page, "move into box", web-request/plugin trigger kinds, process callbacks/state/live objects, plugin search.
+**Built so far:** the core, boxes with `map`, `choose`, `repeat`, `retry`, `try` and `agent`, bundled nodes including `file.save`, program text/file bindings, an immutable file store, folder/git and running-process plugins, the stdio MCP and OpenAPI adapters, secrets, backend/command line, triggers with `schedule.every`, `schedule.daily` and `folder.new_file`, run from here, and Canvas, Runs, When, Plugins and Secrets. Not built yet: opening files from the page, "move into box", web-request triggers and plugin search; the plugin contract lists its unbuilt capabilities.
 
 ## Shape
 
@@ -12,7 +12,7 @@ The interface is grouped by what the user manages:
 
 | Group | Operations |
 |---|---|
-| Help | tutorial text |
+| Help | tutorial text, source labels |
 | Nodes | list, describe |
 | Workflows | open, save (a save based on an out-of-date copy is rejected), check, "what can connect here" |
 | Runs | start, stop, list, show, watch live, run again, run from here |
@@ -29,7 +29,7 @@ Six parts, each with one job.
 | **Catalog** | Knows every node and trigger kind: those described by plugins, and the workflows and nodes in the project folder. |
 | **Checker** | Decides whether a workflow is well formed. Returns a list of problems, each naming the step, the input and what to change. |
 | **Runner** | Performs runs. Starts each step when what it references or comes after is ready, starts child runs, applies the failure rule, and reports every change to the store and to watchers. |
-| **Plugin host** | Installs plugins and supervises their processes. Descriptions start together; the registry retains them across reloads and dispatches concurrent calls by id (protocol in design.md). HTTP serves during initialization; catalog operations wait, while plugin status answers. Shutdown cancels and joins initialization. |
+| **Plugin host** | Installs plugins and retains one process registry across catalog reloads, dispatching concurrent calls by id under the plugin contract in design.md. Catalog initialization runs behind the live HTTP service; shutdown cancels and joins it. |
 | **Trigger service** | Loads trigger definitions, checks each as the two-step workflow it is, starts and stops watching for its kind, stores each accepted event as a waiting run, and starts those runs one at a time, in order. |
 | **Store** | Keeps run records (including those still waiting for their trigger), files, secrets, plugin state and which triggers are on. |
 
@@ -38,9 +38,9 @@ Rules that hold the parts together:
 - **One checker.** It owns workflow structure, types, input constraints, cycles and "no outside effect" inference. The backend also rejects invalid program bindings when loading descriptions. After each edit the frontend sends the workflow, saved or not, and draws the answer: problems, references (canvas lines), and typed ports. Plugins validate their operations at run time.
 - **One entry to the runner: start a run of a node.** A press of Run, a command, a trigger event, a plugin's call and "try this node alone" all arrive the same way. Run from here is the same entry, given an inline workflow made of the selected steps with the copied values as its inputs; the new run's record links to the run and step it came from.
 - **The runner executes a checked snapshot.** It runs the definitions as they were when checked, and does not look up definitions that may change during the run. The snapshot is kept with the record.
-- **A node is performed by one of two things.** The runner performs workflows; a plugin performs everything else. Bundled nodes obey the same descriptions, checks and child-call contract. Program descriptions and plugin setup share one process launcher: literal argv, no implicit shell, description-folder working directory, process-group cancellation. Program stdin/stdout default to JSON objects; each text binding replaces its stream. The runner does not recognise `map` or `choose` by name.
+- **A node is performed by one of two things.** The runner performs workflows; a plugin performs everything else. Program descriptions and setup share one process launcher and process-group cancellation; bindings are in `design.md`.
 - **Waiting does not block children.** A run waiting on child runs does not occupy a scheduler execution slot needed by those children.
-- **Values are checked at the edges.** A value arriving through an unchecked connection is checked against what the consumer expects before the consumer starts, and a node's outputs are checked against its description when it returns.
+- **Values are checked at the edges.** Checker and runner share one type tree; runtime checks enforce the value rules in `design.md`.
 - **Records form a tree.** Each run records its node, inputs, parent run, and for every step its state (waiting, running, done, failed, interrupted), what it received and what it returned. Data is stored as is, files by reference to unchanged contents, secrets by name, live objects as a placeholder.
 - **An accepted event is a run record.** Accepting an event means writing a run record in the waiting state, forced to disk before the source is told it was accepted. There is no separate queue to hand over from: a trigger's queue is its records that are waiting and have never started. Leaving the queue is the same record being marked started, also forced to disk, so after a crash a record is either still queued or started and therefore interrupted, never both and never neither. Ordinary progress of a run is written without that cost.
 
@@ -66,7 +66,7 @@ The Guide panel stays beside the work and opens when a project has no runs. Its 
 Five screens:
 
 - **Canvas.** Node list, steps, ports, lines for references or `after`. A `node` input is a box holding a saved node or inline workflow; outside values cross its edge once. Inline workflows in steps and boxes share a full-size editor with a breadcrumb, Back and Save as to reuse a named node, retaining inputs after checking. Closed cards show one line per port; selecting one opens its fields. A port's actions replace its type on hover or focus. Shift+click or Shift+drag selects several to move or delete together. Make a node groups them into an inline workflow, preserving references, `after` and positions if the checker accepts. Edits undo together. Unchecked connections are marked; Tidy clears positions. Runs keep the closed layout, showing states and results; selecting a step shows Received / Returned and child runs.
-- **Runs.** Every run, newest first, with what started it, filtered by node, state or trigger. Opening one shows the canvas as it was, with results. Run again and Run from here are offered here. Run again starts a fresh run with the same inputs: of the node as it is now, or, when the run was of a workflow with unsaved changes, of that run's own snapshot. Run from here shows the selected part and the copied values, each with its source, before starting.
+- **Runs.** Every run, newest first, with what started it, filtered by node, state or trigger. Opening one shows the canvas as it was, with results. Run again and Run from here are offered here. Run again starts a fresh run with the same inputs: of the node as it is now, or, when the run was of a workflow with unsaved changes, of that run's own snapshot. Reuse rules are in `design.md`.
 - **When.** Triggers read as “When this, run that”, with their settings and inputs. Each shows its on/off switch, current run, waiting-event count, last run and last failure; a link opens Runs filtered to it. The two halves of the add form use the same fields and show the checker’s problems beside them.
 - **Plugins.** Inspect a source, read its name/version/accesses, program and bindings, then confirm. Inspection supplies editable fields, a manifest preview and working folder; drafts survive a visit to Secrets. The list answers during startup, showing installed/missing or starting/running/unavailable, reason and nodes. Add again reopens inspection; the log stays until dismissed. Inspection does not pin a source; changed installed details are shown on its row.
 - **Secrets.** Store and remove by name; replacement is confirmed. Values are never shown again.

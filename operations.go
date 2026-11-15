@@ -14,7 +14,13 @@ type operation struct {
 }
 
 var Operations = map[string]operation{
-	"help":  {call: Help, early: true},
+	"help": {call: func() Values {
+		labels := []string{}
+		for _, adapter := range Adapters {
+			labels = append(labels, adapter.Label)
+		}
+		return Values{"tutorial": Help(), "sources": labels}
+	}, early: true},
 	"nodes": {call: (*Project).Nodes},
 	"show":  {call: (*Project).Describe},
 	"check": {call: (*Project).Check},

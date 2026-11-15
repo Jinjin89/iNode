@@ -32,7 +32,7 @@ export function App() {
   const [runPath, setRunPath] = useState([]);
   const [screen, setScreen] = useState('Canvas');
   const [guide, setGuide] = useState(null);
-  const [tutorial, setTutorial] = useState('');
+  const [help, setHelp] = useState({ tutorial: '', sources: [] });
   const [runFilter, setRunFilter] = useState('');
   const [installLog, setInstallLog] = useState('');
   const [pluginDraft, setPluginDraft] = useState(null);
@@ -94,7 +94,7 @@ export function App() {
   };
   useEffect(() => {
     perform(async () => {
-      for (const [operation, receive] of [[op.help, setTutorial], [op.nodes, setCatalog], [op.runs, rows => setGuide(previous => previous ?? rows.length === 0)]]) {
+      for (const [operation, receive] of [[op.help, setHelp], [op.nodes, setCatalog], [op.runs, rows => setGuide(previous => previous ?? rows.length === 0)]]) {
         for await (const value of call(operation)) receive(value);
       }
     }, 'open');
@@ -253,8 +253,8 @@ export function App() {
     </div> : screen === 'Runs' ? <Runs showRun={showRun} fail={setError} trigger={runFilter} /> : screen === 'When' ?
       <When catalog={catalog} onSave={saveAs} perform={perform} pending={pending} ask={ask} fail={setError} showRun={showRun} showRuns={name => { setRunFilter(name); setScreen('Runs'); }} /> : screen === 'Secrets' ?
       <Secrets perform={perform} pending={pending} ask={ask} fail={setError} /> :
-      <Plugins catalog={catalog} setCatalog={setCatalog} perform={perform} pending={pending} ask={ask} fail={setError} log={installLog} setLog={setInstallLog} changed={pluginChanges} setChanged={setPluginChanges} draft={pluginDraft} setDraft={setPluginDraft} showSecrets={() => setScreen('Secrets')} />}
-    {guide && <Guide text={tutorial} onClose={() => setGuide(false)} />}</div>
+      <Plugins sources={help.sources} catalog={catalog} setCatalog={setCatalog} perform={perform} pending={pending} ask={ask} fail={setError} log={installLog} setLog={setInstallLog} changed={pluginChanges} setChanged={setPluginChanges} draft={pluginDraft} setDraft={setPluginDraft} showSecrets={() => setScreen('Secrets')} />}
+    {guide && <Guide text={help.tutorial} onClose={() => setGuide(false)} />}</div>
     {preview && <Dialog className="box-editor" label="Run from here preview" onClose={() => setPreview(null)}>
         <div className="toolbar"><strong>Run from here</strong><button disabled={pending.includes('from')} onClick={() => from(preview.source.step, true)}>Start run</button><button disabled={pending.includes('from')} onClick={() => setPreview(null)}>Back</button></div>
         <Source source={preview.source} showRun={showRun} fail={setError} />
