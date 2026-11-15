@@ -410,6 +410,23 @@ func TestInterruptedAndUnrecordableRuns(t *testing.T) {
 	}
 }
 
+func TestTextFileNodesUseThePathRule(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	p := project(t, nil)
+	run, err := p.Start(context.Background(), "file.write", Values{"path": "~/note.txt", "text": "hi"})
+	if err != nil || run.State != "done" {
+		t.Fatalf("write to ~/: %v, %v", run, err)
+	}
+	run, err = p.Start(context.Background(), "file.read", Values{"path": "~/note.txt"})
+	if err != nil || run.Outputs["text"] != "hi" {
+		t.Fatalf("read from ~/: %v, %v", run, err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "note.txt")); err != nil {
+		t.Fatalf("~/ did not mean the home folder: %v", err)
+	}
+}
+
 func TestBuiltinDeclarations(t *testing.T) {
 	for name, node := range builtins(t.TempDir()) {
 		if node.Doc == "" || node.run == nil && node.watch == nil {

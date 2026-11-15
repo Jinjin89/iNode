@@ -57,16 +57,15 @@ func fileLike(value any) bool {
 	return ok && tagged
 }
 
-func (p *Project) fullPath(name string) string {
-	if name == "~" || strings.HasPrefix(name, "~/") {
-		if home, err := os.UserHomeDir(); err == nil {
-			name = filepath.Join(home, strings.TrimPrefix(name, "~"))
-		}
+// LocalPath is the one rule for a path a person enters: ~ is the home folder, and a relative path starts at dir.
+func LocalPath(dir, path string) string {
+	if home, err := os.UserHomeDir(); err == nil && (path == "~" || strings.HasPrefix(path, "~/")) {
+		path = filepath.Join(home, path[1:])
 	}
-	if !filepath.IsAbs(name) {
-		name = filepath.Join(p.dir, name)
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(dir, path)
 	}
-	return name
+	return path
 }
 
 func (p *Project) blob(file fileRef) string {
@@ -119,7 +118,7 @@ func (p *Project) localFile(name string, mode fileMode) (any, error) {
 	if mode == returnedFiles {
 		return nil, fmt.Errorf("return a stored file reference, not a path")
 	}
-	path := p.fullPath(name)
+	path := LocalPath(p.dir, name)
 	info, err := os.Stat(path)
 	if err == nil && !info.Mode().IsRegular() {
 		kind := "not a regular file"

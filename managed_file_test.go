@@ -104,10 +104,10 @@ func TestFileAcceptanceAndSave(t *testing.T) {
 			destination := "~/" + filepath.ToSlash(relative)
 			for range 2 {
 				run, err := p.Start(t.Context(), "file.save", Values{"file": saved.Outputs["file"], "path": destination})
-				if err != nil || run.Outputs["path"] != p.fullPath(destination) {
+				if err != nil || run.Outputs["path"] != LocalPath(p.dir, destination) {
 					t.Fatalf("save: %+v, %v", run, err)
 				}
-				data, err := os.ReadFile(p.fullPath(destination))
+				data, err := os.ReadFile(LocalPath(p.dir, destination))
 				if err != nil || !bytes.Equal(data, original) {
 					t.Fatalf("saved bytes: %x, %v", data, err)
 				}

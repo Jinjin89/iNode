@@ -20,12 +20,6 @@ import (
 var notToolName = regexp.MustCompile(`[^\w-]`)
 
 func builtins(dir string) map[string]Node {
-	path := func(name string) string {
-		if filepath.IsAbs(name) {
-			return name
-		}
-		return filepath.Join(dir, name)
-	}
 	client := &http.Client{Timeout: 30 * time.Second}
 	return map[string]Node{
 		"schedule.every": {
@@ -40,7 +34,7 @@ func builtins(dir string) map[string]Node {
 			Doc: "Check new file names once a second: files present when switched on are ignored; files removed before being seen are missed; files can be reported before writing finishes.", NoOutsideEffect: true,
 			Inputs: Ports{"path": {Type: textType}}, Outputs: Ports{"path": {Type: textType}, "name": {Type: textType}},
 			watch: func(ctx context.Context, in Values) (watch, error) {
-				return newFile(ctx, Values{"path": path(in["path"].(string))})
+				return newFile(ctx, Values{"path": LocalPath(dir, in["path"].(string))})
 			},
 		},
 		"map": {
@@ -255,9 +249,8 @@ func builtins(dir string) map[string]Node {
 			Doc:    "Save a stored file, creating folders and replacing the destination; paths start at the project folder or ~/.",
 			Inputs: Ports{"file": {Type: Type{Name: "file"}}, "path": {Type: textType}}, Outputs: Ports{"path": {Type: textType}},
 			run: func(_ context.Context, in Values, _ Call) (Values, error) {
-				project := Project{dir: dir}
-				name := project.fullPath(in["path"].(string))
-				source, err := os.Open(project.blob(in["file"].(fileRef)))
+				name := LocalPath(dir, in["path"].(string))
+				source, err := os.Open((&Project{dir: dir}).blob(in["file"].(fileRef)))
 				if err != nil {
 					return nil, err
 				}
@@ -269,19 +262,19 @@ func builtins(dir string) map[string]Node {
 			},
 		},
 		"file.read": {
-			Doc: "Read a UTF-8 text file; relative paths start at the project folder.", NoOutsideEffect: true,
+			Doc: "Read a UTF-8 text file; paths start at the project folder or ~/.", NoOutsideEffect: true,
 			Inputs: Ports{"path": {Type: textType}}, Outputs: Ports{"text": {Type: textType}},
 			run: func(_ context.Context, in Values, _ Call) (Values, error) {
-				data, err := os.ReadFile(path(in["path"].(string)))
+				data, err := os.ReadFile(LocalPath(dir, in["path"].(string)))
 				return Values{"text": string(data)}, err
 			},
 		},
 		"file.write": {
-			Doc:    "Write a text file, replacing its contents; its parent folder must exist.",
+			Doc:    "Write a text file, replacing its contents; its parent folder must exist; paths start at the project folder or ~/.",
 			Inputs: Ports{"path": {Type: textType}, "text": {Type: textType}}, Outputs: Ports{"path": {Type: textType}},
 			run: func(_ context.Context, in Values, _ Call) (Values, error) {
 				name := in["path"].(string)
-				err := os.WriteFile(path(name), []byte(in["text"].(string)), 0644)
+				err := os.WriteFile(LocalPath(dir, name), []byte(in["text"].(string)), 0644)
 				return Values{"path": name}, err
 			},
 		},
