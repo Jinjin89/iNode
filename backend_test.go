@@ -82,12 +82,26 @@ func TestHelp(t *testing.T) {
 		t.Fatal(err)
 	}
 	client := runningBackend(t, t.TempDir())
-	var received string
-	if err := json.Unmarshal(request(t, client, "help")[0], &received); err != nil {
-		t.Fatal(err)
-	}
-	if received != string(text) || received != Help() {
-		t.Fatal("help differs from the embedded tutorial")
+	before := Adapters
+	t.Cleanup(func() { Adapters = before })
+	for _, test := range []struct {
+		adapters []Adapter
+		labels   []string
+	}{
+		{nil, []string{}},
+		{[]Adapter{{Label: "Example source"}, {Label: "Another source"}}, []string{"Example source", "Another source"}},
+	} {
+		Adapters = test.adapters
+		var received struct {
+			Tutorial string
+			Sources  []string
+		}
+		if err := json.Unmarshal(request(t, client, "help")[0], &received); err != nil {
+			t.Fatal(err)
+		}
+		if received.Tutorial != string(text) || received.Tutorial != Help() || received.Sources == nil || !slices.Equal(received.Sources, test.labels) {
+			t.Fatalf("help must carry the embedded tutorial and registered source labels: %+v", received)
+		}
 	}
 }
 

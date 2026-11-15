@@ -4,7 +4,7 @@ iNode is a local, self-hosted workflow framework inspired by n8n and ComfyUI. Th
 
 ## Aim
 
-Anybody should be able to use iNode with almost nothing to learn first. That gives four tests for every design choice:
+Four tests keep iNode usable with almost nothing to learn first:
 
 - **Nothing to memorise.** Every node describes itself, and the frontend and command line show that description wherever the node is used.
 - **Detectable mistakes are prevented.** A connection that cannot work cannot be made. What can only be known while running (a missing field in a reply, an expired credential) is marked as unchecked beforehand and explained in terms of the user's workflow when it fails.
@@ -29,7 +29,7 @@ A node has a name (`plugin.name`), a one-sentence description, named typed input
 
 - **No separate configuration.** An input is filled with a value you write or with a reference to another output. A node with some inputs filled in is still a node, with fewer open inputs.
 - **Fixed ports.** Inputs and outputs never change with the values given. A capability with several modes becomes several nodes. Data whose shape is only known at run time (query rows, spreadsheet columns) travels inside one `object` or `list` port.
-- **No outside effect.** A plugin may mark an operation as having no effect outside the run. Such an operation publishes nothing and does not change user data, an outside service's data, the objects it was given, or state shared with other runs. It may read data that changes, compute, and create new values and new files in the core's store. Using up time, money or a quota is allowed. Taking a message off a queue, moving a shared cursor, or adding to a stored conversation is not. Anything unknown stays unmarked. A workflow has the mark when every step in it does, including what is in its boxes, which the checker works out. The frontend shows it as "can be retried", and says that a retry may cost again and may give a different result.
+- **No outside effect.** A plugin may mark a node that publishes nothing and changes no user or service data, input objects or shared state. It may read changing data, compute, create values and stored files, and spend time, money or quota. Consuming a queue, moving a shared cursor or appending a conversation is an effect. Unknown operations stay unmarked. The checker marks a workflow only when every step, including boxes, qualifies. The page says "can be retried", warning that retries can cost again or return different results.
 
 Types are names, checked when connecting:
 
@@ -48,7 +48,7 @@ Types are names, checked when connecting:
 
 ## Workflow
 
-A workflow is a node made of steps, with required or defaulted inputs. Each step's inputs are filled by values or by references to other steps (`=page.body`, with dotted paths into data such as `=resp.json.user.name`, where a number picks a list item: `=feed.items.0.title`). `=inputs.url` refers to the workflow's own input. A reference can also sit inside a written list or object. A text that really starts with `=` is written with `==`. Step and port names contain no dots. Any input can be **exposed** as an input of the workflow, and any output as an output of the workflow, which is what makes the workflow a node.
+A workflow is a node made of steps, with required or defaulted inputs. Step inputs hold values or references to steps (`=page.body`), nested data (`=resp.json.user.name`), list items (`=feed.items.0.title`) or workflow inputs (`=inputs.url`). References can sit inside written lists or objects; `==` writes a literal leading `=`. Step and port names contain no dots. Any input can be **exposed** as a workflow input, and any output as a workflow output.
 
 **A node in a `node` input is not a step.** It does not run by itself; the receiving step calls it. In the frontend the input is a box. A box holds a saved node or steps built directly inside it (an inline workflow, the same thing without a file name). Anything inside the box runs when the box's owner calls it.
 
@@ -63,7 +63,7 @@ A node passed this way has at most one open input and exactly one output. A node
 | `repeat(start: T, do: node(T) gives object{state: T, done: bool}, max: number)` | Calls `do` with the state until `done`. `result: T`, the final state. Reaching `max` calls without `done` fails. Covers paging and polling. |
 | `retry(do: node() gives T, times: number)` | Calls `do` up to `times` times in total until it succeeds. `result: T`. Accepts only nodes with no outside effect. |
 | `try(do: node() gives T, on_error: node(error: object) gives T)` | Calls `on_error` with the failed step's name and message when `do` fails. `result: T`. |
-| `agent(goal: text, model: node(object) gives object{text: text, calls: list of object}, tools: list of node(any) gives any, max: number)` | Calls `model` with `{messages, tools}` and runs the tools its reply asks for, until a reply has no calls. `result: text`. A tool's name, description and open input are its definition; a failed tool is told to the model. The model decides which tools run, outside effects included, and nothing asks first. Reaching `max` model calls fails. |
+| `agent(goal: text, model: node(object) gives object{text: text, calls: list of object}, tools: list of node(any) gives any, max: number)` | Calls `model` with `{messages, tools}` until a reply has no calls, executing requested tools sequentially as child runs and reporting tool failures to the model. `result: text`. A tool's name, description and open input define it; tools take one plain-data input and return one output. The model chooses outside effects without approval. Reaching `max` model calls fails. |
 
 A step can also list other steps in `after`. It then waits for them to succeed without using their outputs. The frontend draws this as its own kind of line. It orders side effects; it does not undo or clean up anything on failure.
 
@@ -77,7 +77,7 @@ A step can also list other steps in `after`. It then waits for them to succeed w
 
 **Run again** always starts a fresh run. Nothing is reused or recovered automatically. If the backend stops during a run, the run is marked interrupted with outcome unknown and is never replayed by itself.
 
-**Run from here** is the one explicit way to reuse past results, for changing a late step without redoing expensive earlier ones. On a step of a finished past run, it starts a fresh run of that step and everything downstream of it, using the workflow as it is saved now; nothing else runs. Every value this part or the workflow's outputs need from elsewhere is copied from the run on screen, labelled with its source and age, and shown before it starts. It is refused, with the reason, when a needed value did not come from a completed step, when an `after` crosses into the selected part, or when a step that supplied a value would be given a different node, different filled-in inputs or a different saved workflow today. A change to the code of a node upstream is not detected. It works within one workflow, not inside one past iteration of a `map`.
+**Run from here** explicitly reuses past results to change a late step without redoing earlier work. From a finished run, it starts a fresh run of the selected step and everything downstream using the currently saved workflow; nothing else runs. Values needed from elsewhere, including for workflow outputs, are copied from the displayed run, labelled with source and age, and previewed. It refuses with reasons if a needed value lacks a completed producer, an `after` crosses into the selection, or a supplying step would now have a different node, filled inputs or saved workflow. Upstream node code changes are not detected. It works within one workflow, not within a past `map` iteration.
 
 ## Trigger
 
@@ -103,28 +103,32 @@ One backend runs per project folder. Browser and command line share capabilities
 
 ## Plugins
 
-A plugin is a folder with a `plugin` manifest (`name`, `version`, `doc`, `accesses`, optional `setup`) and `.node` files. Optional `process` uses the same string/list argument rule as `setup`, without a shell; `env: {API_KEY: stored_key}` binds environment variables to secret names, shown before installation. Its working folder is the installed plugin folder; its environment contains PATH/HOME/TMPDIR/LANG plus these bindings.
+A plugin is a folder of `.node` files and a `plugin` manifest naming its version, description, claimed access, optional setup/program and secret bindings. Programs follow the argument rules below, run from their installed folder with a limited environment, and are disclosed before installation.
 
-Processes start on installation and together on backend startup; each shows `starting` until it describes its nodes or fails. They run until removal/replacement/shutdown: close stdin, wait briefly, then end the process group. Nodes join `.node` files as `plugin.node`. Requests and replies use stdin/stdout, one JSON object per line (replies up to 1 MiB), with string ids; stderr is bounded diagnostics. Only three messages:
+Each plugin can keep one program, started on installation and alongside others at backend startup until removal, replacement or shutdown. It shows `starting` until it describes its nodes or fails. Described ordinary nodes join file nodes as `plugin.name`, using the same ports and effect mark, without a `run` field.
 
-- **describe:** `{"id":"1","method":"describe"}` → `{"id":"1","nodes":{"next":{"doc":"Advance counter.","inputs":{},"outputs":{"count":"number"}}}}`. Node descriptions use the usual ports and optional `no_outside_effect`, without `run`.
-- **run:** `{"id":"2","method":"run","node":"next","inputs":{},"dir":"/project/.inode/work/plugin-xyz"}` → `{"id":"2","outputs":{"count":1}}`, or `{"id":"2","error":"what went wrong"}`. Files must be closed before replying: a declared file leaf may be an absolute path inside `dir`; the host imports it before checking/publishing outputs, then removes `dir`. Existing stored references also work.
-- **cancel:** `{"id":"2","method":"cancel"}` asks the producer to stop that run. Reply once to the original run after work stops, for example `{"id":"2","error":"cancelled"}`; no separate cancel reply. The host retains `dir` until that reply or process exit and discards late outputs. Cancellation cannot undo outside actions.
+The program keeps reading while runs execute; ids match out-of-order replies. Three messages cross the boundary:
 
-Keep reading while runs execute: replies may arrive out of order and ids identify their runs. Exit/unreadable stdout fails pending runs, warns they may or may not have finished, marks the process unavailable and makes checks report the reason on `use`; add the plugin again to recover. There is no automatic replay. Plugin-to-core requests, child calls, state, live objects and plugin triggers are not built yet.
+- **describe:** return node descriptions.
+- **run:** receive named inputs and a private working folder; return outputs or an error.
+- **cancel:** stop the run, then reply once to its original request. Cancellation cannot undo outside actions.
 
-- **Discover:** an index that is only a list of names and URLs; no hosted service is required.
-- **Install:** always an explicit action, from a name, a git URL or a local path, after showing what the plugin says it accesses. A plugin is trusted code; nothing is enforced. Adding a plugin again replaces it. Each plugin gets its own process and environment, so plugins cannot break each other's dependencies.
-- **Use:** nodes appear as `plugin.node`. A project lists the plugins and versions it uses. Opening a project reports what is missing; it never installs by itself.
+Run replies may return paths to closed files inside their private folder or stored references. The host imports paths before checking/publishing outputs, keeps the folder until reply or exit, then removes it; cancelled late outputs are discarded.
 
-**Adapters**, in order of value:
+Exit or unreadable stdout fails pending runs with outcome unknown and makes checks report the plugin unavailable with its reason. Add again to recover; nothing is replayed automatically. Callbacks, child calls, shared state, live handles and plugin triggers remain unbuilt.
 
-1. **Command-line tools.** Ordinary `.node` descriptions bind arguments, flags, stdin, stdout and environment without a shell. File bindings follow with the managed file store; wrapping ffmpeg or pandoc then needs only a description.
-2. **MCP servers.** Paste a server command into Plugins, edit the name and secret bindings, then confirm the ordinary plugin that runs `inode mcp -- <server command>`. Each tool becomes a node with conservative schema-derived ports and `result: {response, files}` (text/structured data and stored media); Add again rediscovers tools.
-3. **OpenAPI.** Paste an OpenAPI 3 document's file or URL into Plugins, edit the name, base URL and secret bindings, then confirm the ordinary plugin that runs `inode openapi -- <document> <base URL>`. Each operation becomes a node with schema-derived ports and `result: {status, body, files}`; these are API calls, not finished integrations, so paging, polling and sign-in are built on top as workflows.
+- **Discover:** an index of names and URLs, without a hosted service.
+- **Install:** explicitly confirm claimed access; plugins are trusted code, not enforced permissions. Sources can be names, git URLs or local folders. Add again replaces the plugin; separate processes and environments isolate dependencies.
+- **Use:** projects list plugins and versions; opening reports missing ones without installing.
+
+**Adapters**, in order of value. MCP and OpenAPI project schemas into named ports, without full source-schema validation:
+
+1. **Command-line tools.** A `.node` file binds arguments, flags, streams, environment and files without a shell.
+2. **MCP servers.** Paste a server command to install its tools as ordinary nodes. Add again rediscovers them; replies contain data and stored media.
+3. **OpenAPI.** Paste a version 3 document's file or URL to install its API operations. Replies contain status, data or files; HTTP errors fail runs, and only GET/HEAD are marked without outside effect.
 4. **Library functions.** Signature to ports, as scaffolding for functions that already fit.
-5. **ComfyUI.** One node submits a whole graph to a running ComfyUI server and returns its output files. Hosting individual ComfyUI nodes is not planned.
-6. **n8n nodes.** Not adapted; they depend on n8n's item runtime and credentials. The same services are reached through OpenAPI or MCP.
+5. **ComfyUI.** One node submits a whole graph to a ComfyUI server and returns files; hosting individual nodes is not planned.
+6. **n8n nodes.** Not adapted because its item runtime and credentials do not fit; use OpenAPI/MCP instead.
 
 **Core and plugins:**
 
@@ -136,7 +140,7 @@ Keep reading while runs execute: replies may arrive out of order and ids identif
 | File store, secret store, plugin state | Program descriptions; MCP, OpenAPI, ComfyUI adapters |
 | Plugin host and the interface used by both clients | |
 
-The core contains no special nodes. The bundled plugin follows the same contract as any other, and the core does not recognise `map` or `choose` by name.
+The core contains no special nodes. The bundled plugin follows the same contract as any other; the core does not recognise control nodes by name.
 
 ## Example: daily reading digest
 
@@ -169,7 +173,7 @@ outputs: {ok: =sent.ok}
 
 ## Writing a node
 
-A `.node` file describes a program as a node. In `nodes/<name>.node`, declare `doc`, inputs, outputs, optional `no_outside_effect` and `run`. Programs run without a shell. `run` accepts quoted words with `~/` expansion, an argument list, or `{args: [...]}`; shell operations are refused and literal shell characters require quoting or a list.
+A `.node` file in `nodes/<name>.node` declares `doc`, inputs, outputs, optional `no_outside_effect` and `run`. Programs run without a shell. `run` accepts quoted words with `~/` expansion, an argument list, or `{args: [...]}`; shell operations are refused and literal shell characters require quoting or a list.
 
 | Binding | What it does |
 |---|---|
@@ -197,14 +201,13 @@ These are deliberate. Each keeps the model small.
 | Cleanup guaranteed after failure | `try(do, on_error)` covers the common case; there is no "finally". |
 | Using one plugin's live objects in another plugin | Exchange files. |
 | Transforming secrets inside a workflow | A node that needs a secret takes a `secret` input and uses it internally. |
-| Noticing changed node code in Run from here | Records keep what each step was given and returned, not the program behind it. The preview shows where each reused value came from and how old it is. |
 | Seeing every file in a watched folder | The folder kind looks about once a second. Files already there when it is switched on are not events, a file removed before it is seen is missed, and a file can be reported before another program has finished writing it. |
 | Coordinating state shared between workflows | Only runs of one trigger are kept from overlapping. Plugins that keep state guard it themselves. |
 | Formulas inside references | References select data by path only; computation is a node. |
 | Enforced limits on what a plugin can do | Plugins are trusted code; install only what you trust. |
-| Full MCP conformance | Stdio, 2026-07-28, and earlier revisions for tools only; schemas are projected to iNode types without full validation, which MCP requires clients to perform. No HTTP, input rounds, sampling, roots, resource operations, prompts/completion, tasks, Apps or push catalog updates. File arguments use the server's JSON contract; inline wire frames are buffered and limited to 8 MiB. |
-| Full OpenAPI coverage | OpenAPI 3 documents up to 8 MiB with local `$ref`s; inputs are not validated against the schema. JSON request bodies only; JSON and text responses up to 8 MiB are data, other content becomes files, a status of 400 or above fails the run, and response headers are not returned. Only GET and HEAD are marked as having no outside effect. Credentials are http bearer/basic and header/query API keys, each read from the variable named after its security scheme; no OAuth flows, cookies or mutual TLS. |
-| A full AI agent | `agent` is the tool loop only: no streaming, no memory between runs, one tool call at a time, no files to the model, no approval before outside effects, and each tool has one open plain-data input and one output. |
+| Full MCP conformance | Only plain local stdio tools, keeping the adapter small; file arguments follow the server's JSON contract. Richer protocol features and embedded apps are not supported. |
+| Full OpenAPI coverage | JSON bodies, local schema references and bearer/basic or header/query API keys only; response headers are not returned. Workflows provide paging, polling and sign-in rather than hiding them in the adapter. |
+| A full AI agent | `agent` is a text/tool loop, not a conversation service: no streaming, files to the model or memory between runs. |
 | Managing iNode from another machine | The backend serves the local machine only. |
 | Automatic removal of stored files | Archive/move whole projects including `.inode/`, or remove unneeded projects. Deleting blobs breaks run records. |
 | Importing n8n or ComfyUI workflow files | Adapters reuse their capabilities, not their formats. |

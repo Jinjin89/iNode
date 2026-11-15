@@ -39,7 +39,7 @@ function Inspection({ draft, setDraft, change, pending, showSecrets }) {
   </form></Dialog>;
 }
 
-export function Plugins({ catalog, setCatalog, perform, pending, ask, fail, log, setLog, changed, setChanged, draft, setDraft, showSecrets }) {
+export function Plugins({ sources, catalog, setCatalog, perform, pending, ask, fail, log, setLog, changed, setChanged, draft, setDraft, showSecrets }) {
   const [rows, setRows] = useState([]), [source, setSource] = useState(''), [sourceError, setSourceError] = useState('');
   useReply(op.plugins, [], setRows, fail, 1000);
   const change = (operation, value, confirmed) => perform(async () => {
@@ -67,7 +67,7 @@ export function Plugins({ catalog, setCatalog, perform, pending, ask, fail, log,
     } } catch (error) { setSourceError(error.message); }
   }, 'plugin inspect');
   return <section className="plugins">
-    <h1>Plugins</h1><p>Plugins add nodes to your project. Enter a folder, a git URL, an MCP server command or an OpenAPI document’s file or URL to see what it will do before installing.</p>
+    <h1>Plugins</h1><p>Plugins add nodes to your project. Enter a folder or a git URL{sources.length > 0 && ', or another source (' + sources.join(', ') + ')'} to see what it will do before installing.</p>
     <form className="screen-form" onSubmit={event => { event.preventDefault(); inspectSource(source); }}>
       <header className="form-heading"><h2>Add a plugin</h2><button className="primary" disabled={pending.includes('plugin inspect') || adding} type="submit">{pending.includes('plugin inspect') ? 'Inspecting…' : adding ? 'Installing…' : 'Add plugin'}</button></header><div className="row"><label>Plugin source<input aria-label="Plugin source" value={source} onChange={event => setSource(event.target.value)} required /></label>
       </div>

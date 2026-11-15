@@ -1,6 +1,6 @@
 # iNode
 
-iNode is a local, self-hosted workflow framework inspired by n8n and ComfyUI, built on three concepts: node, run and trigger. It has one backend and two clients of it, a browser frontend and a command line, which can do the same things. The project is at the conceptual design stage. `docs/design.md` is the current design and the source of truth.
+iNode is a local, self-hosted workflow framework inspired by n8n and ComfyUI, built on three concepts: node, run and trigger. It has one backend and two clients of it, a browser frontend and a command line, which can do the same things. The project is built and working. `docs/design.md` is the current design and the source of truth.
 
 The aim is that anybody can use iNode with almost nothing to learn first: no usage rules to memorise, mistakes prevented by the tool, and a model small enough to explain on one page. Every rule below protects that.
 
