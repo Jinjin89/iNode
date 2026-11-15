@@ -129,7 +129,7 @@ func waitFile(t *testing.T, path string) {
 }
 
 func TestAdapterVersionsAndCalls(t *testing.T) {
-	t.Setenv("CLAUDE_CODE_ENTRYPOINT", "cli")
+	t.Setenv("INODE_TEST_ENTRYPOINT", "cli")
 	t.Setenv("FOO", "cli")
 	t.Setenv("BAR", "1")
 	for _, version := range []string{"modern", "legacy", "2025-06-18", "2025-03-26", "2024-11-05", "delayed", "negotiate"} {

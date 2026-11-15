@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -170,70 +171,142 @@ func TestSchema(t *testing.T) {
 	}
 }
 
-func TestAnthropicExampleTranslation(t *testing.T) {
-	var sent Values
-	var headers http.Header
-	replies := []string{
-		`{"stop_reason":"tool_use","content":[{"type":"thinking","thinking":"","signature":"sig"},{"type":"text","text":"Checking."},{"type":"tool_use","id":"toolu_1","name":"text_upper","input":{"text":"hi"}},{"type":"tool_use","id":"toolu_2","name":"boom","input":{"why":"x"}}]}`,
-		`{"stop_reason":"end_turn","content":[{"type":"text","text":"It is "},{"type":"text","text":"HI."}]}`,
-		`{"stop_reason":"refusal","content":[]}`,
+func TestOpenAIExampleTranslation(t *testing.T) {
+	type exchange struct {
+		body         Values
+		headers      http.Header
+		method, path string
 	}
+	var mu sync.Mutex
+	var sent exchange
+	var replies []Values
+	status := http.StatusOK
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		sent, headers = nil, r.Header
-		json.Unmarshal(body, &sent)
-		if r.URL.Path == "/denied" {
-			w.WriteHeader(http.StatusUnauthorized)
-			io.WriteString(w, `{"error":{"message":"invalid x-api-key"}}`)
+		var body Values
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
 			return
 		}
-		io.WriteString(w, replies[0])
-		replies = replies[1:]
+		mu.Lock()
+		sent = exchange{body, r.Header.Clone(), r.Method, r.URL.Path}
+		code := status
+		var reply Values
+		if len(replies) > 0 {
+			reply, replies = replies[0], replies[1:]
+		}
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(code)
+		json.NewEncoder(w).Encode(reply)
 	}))
 	defer server.Close()
-	p := fileProject(t, nil)
-	if err := p.SetSecret("anthropic_key", "private-model-key"); err != nil {
+	p := fileProject(t, map[string]string{"openai-agent.flow": fmt.Sprintf(`steps:
+  a:
+    use: agent
+    in:
+      goal: Shout hi
+      model: {use: openai.chat, in: {key: model_key, url: %q}}
+      tools: [text.upper]
+      max: 2
+outputs: {answer: =a.result}`, server.URL+"/v1/responses")})
+	if err := p.SetSecret("model_key", "private-model-key"); err != nil {
 		t.Fatal(err)
 	}
-	source, _ := filepath.Abs("examples/anthropic")
+	source, _ := filepath.Abs("examples/openai")
 	if err := p.Add(t.Context(), source, io.Discard); err != nil {
 		t.Fatal(err)
 	}
+	node, err := p.Describe("openai.chat")
+	if err != nil || node.Inputs["model"].Default != "gpt-6.1-terra" || node.Inputs["url"].Default != "https://api.openai.com/v1/responses" {
+		t.Fatalf("provider defaults: %+v, %v", node, err)
+	}
 	tools := []any{Values{"name": "text_upper", "description": "Convert text to uppercase.", "parameters": Values{"type": "object"}}}
-	ask := func(url string, messages ...any) (Values, error) {
-		run, err := p.Start(t.Context(), "anthropic.chat", Values{"key": "anthropic_key", "url": server.URL + url, "request": Values{"messages": messages, "tools": tools}})
+	ask := func(code int, response Values, messages ...any) (Values, exchange, error) {
+		t.Helper()
+		mu.Lock()
+		status, replies, sent = code, []Values{response}, exchange{}
+		mu.Unlock()
+		run, err := p.Start(t.Context(), "openai.chat", Values{"key": "model_key", "url": server.URL + "/v1/responses", "request": Values{"messages": messages, "tools": tools}})
+		mu.Lock()
+		wire := sent
+		mu.Unlock()
+		if run == nil || wire.body == nil {
+			t.Fatalf("model did not send a request: %+v, %v", run, err)
+		}
 		reply, _ := run.Outputs["reply"].(Values)
-		return reply, err
+		return reply, wire, err
 	}
+	output := []any{
+		Values{"id": "rs_1", "type": "reasoning", "summary": []any{}, "encrypted_content": "opaque-encrypted-reasoning"},
+		Values{"id": "msg_1", "type": "message", "status": "completed", "role": "assistant", "phase": "commentary", "content": []any{Values{"type": "output_text", "text": "Checking.", "annotations": []any{}}}},
+		Values{"id": "fc_1", "type": "function_call", "call_id": "call_1", "name": "text_upper", "arguments": `{"text":"hi"}`, "status": "completed"},
+		Values{"id": "fc_2", "type": "function_call", "call_id": "call_2", "name": "text_upper", "arguments": `{"text":"yo"}`, "status": "completed"},
+	}
+	firstResponse := Values{"status": "completed", "output": output}
+	finalResponse := Values{"status": "completed", "output": []any{Values{"type": "message", "status": "completed", "role": "assistant", "phase": "final_answer", "content": []any{Values{"type": "output_text", "text": "It is "}, Values{"type": "output_text", "text": "HI."}}}}}
 	user := Values{"role": "user", "text": "Shout hi"}
-	first, err := ask("/v1/messages", user)
+	first, initial, err := ask(http.StatusOK, firstResponse, user)
 	calls, _ := first["calls"].([]any)
-	if err != nil || first["text"] != "Checking." || len(calls) != 2 || calls[0].(Values)["id"] != "toolu_1" || calls[0].(Values)["name"] != "text_upper" || !reflect.DeepEqual(calls[1].(Values)["input"], Values{"why": "x"}) {
-		t.Fatalf("reply with calls: %#v, %v", first, err)
+	if err != nil || first["text"] != "Checking." || len(calls) != 2 || calls[0].(Values)["id"] != "call_1" || calls[0].(Values)["name"] != "text_upper" || !reflect.DeepEqual(calls[1].(Values)["input"], Values{"text": "yo"}) || !reflect.DeepEqual(calls[0].(Values)["content"], output) {
+		t.Fatalf("reply with calls and replay state: %#v, %v", first, err)
 	}
-	if headers.Get("X-Api-Key") != "private-model-key" || headers.Get("Anthropic-Version") == "" || sent["model"] != "claude-opus-5-5" || sent["max_tokens"] != 16000.0 ||
-		!reflect.DeepEqual(sent["messages"], []any{Values{"role": "user", "content": "Shout hi"}}) ||
-		!reflect.DeepEqual(sent["tools"], []any{Values{"name": "text_upper", "description": "Convert text to uppercase.", "input_schema": Values{"type": "object"}}}) {
-		t.Fatalf("first request: %v %#v", headers, sent)
+	if initial.method != "POST" || initial.path != "/v1/responses" || initial.headers.Get("Authorization") != "Bearer private-model-key" || initial.headers.Get("Content-Type") != "application/json" || initial.body["model"] != "gpt-6.1-terra" || initial.body["store"] != false ||
+		!reflect.DeepEqual(initial.body["input"], []any{Values{"role": "user", "content": "Shout hi"}}) ||
+		!reflect.DeepEqual(initial.body["tools"], []any{Values{"type": "function", "strict": false, "name": "text_upper", "description": "Convert text to uppercase.", "parameters": Values{"type": "object"}}}) {
+		t.Fatalf("first request: %+v", initial)
 	}
-	second, err := ask("/v1/messages", user, Values{"role": "assistant", "text": "Checking.", "calls": calls}, Values{"role": "tool", "id": "toolu_1", "text": `"HI"`}, Values{"role": "tool", "id": "toolu_2", "text": "failed: x"})
+	second, wire, err := ask(http.StatusOK, finalResponse, user, Values{"role": "assistant", "text": "Checking.", "calls": calls}, Values{"role": "tool", "id": "call_1", "text": `"HI"`}, Values{"role": "tool", "id": "call_2", "text": "failed: x"})
 	if err != nil || second["text"] != "It is HI." || len(second["calls"].([]any)) != 0 {
 		t.Fatalf("final reply: %#v, %v", second, err)
 	}
-	wire := sent["messages"].([]any)
-	assistant := wire[1].(Values)["content"].([]any)
-	if len(wire) != 3 || len(assistant) != 4 || assistant[0].(Values)["signature"] != "sig" || assistant[2].(Values)["type"] != "tool_use" ||
-		!reflect.DeepEqual(wire[2], Values{"role": "user", "content": []any{Values{"type": "tool_result", "tool_use_id": "toolu_1", "content": `"HI"`}, Values{"type": "tool_result", "tool_use_id": "toolu_2", "content": "failed: x"}}}) {
-		t.Fatalf("the model's own blocks return unchanged and one turn's results share a message: %#v", wire)
+	want := append([]any{Values{"role": "user", "content": "Shout hi"}}, output...)
+	want = append(want, Values{"type": "function_call_output", "call_id": "call_1", "output": `"HI"`}, Values{"type": "function_call_output", "call_id": "call_2", "output": "failed: x"})
+	if !reflect.DeepEqual(wire.body["input"], want) {
+		t.Fatalf("reasoning, phase, output order and call ids must replay exactly: %#v", wire.body)
 	}
-	plain := Values{"role": "assistant", "text": "Checking.", "calls": []any{use("c1", "text_upper", Values{"text": "hi"})}}
-	if _, err := ask("/v1/messages", user, plain, Values{"role": "tool", "id": "c1", "text": `"HI"`}); err == nil || !strings.Contains(err.Error(), "stopped without a full reply (refusal)") {
-		t.Fatalf("refusal: %v", err)
+	plain := Values{"role": "assistant", "text": "Checking.", "calls": []any{use("rebuilt_1", "text_upper", Values{"text": "hi"})}}
+	if _, wire, err = ask(http.StatusOK, finalResponse, user, plain, Values{"role": "tool", "id": "rebuilt_1", "text": `"HI"`}); err != nil {
+		t.Fatal(err)
 	}
-	if blocks := sent["messages"].([]any)[1].(Values)["content"]; !reflect.DeepEqual(blocks, []any{Values{"type": "text", "text": "Checking."}, Values{"type": "tool_use", "id": "c1", "name": "text_upper", "input": Values{"text": "hi"}}}) {
-		t.Fatalf("an assistant turn from another model is rebuilt from text and calls: %#v", blocks)
+	rebuilt := wire.body["input"].([]any)
+	var arguments Values
+	call := rebuilt[2].(Values)
+	if len(rebuilt) != 4 || !reflect.DeepEqual(rebuilt[1], Values{"role": "assistant", "phase": "commentary", "content": "Checking."}) || call["type"] != "function_call" || call["call_id"] != "rebuilt_1" || call["name"] != "text_upper" || json.Unmarshal([]byte(call["arguments"].(string)), &arguments) != nil || arguments["text"] != "hi" ||
+		!reflect.DeepEqual(rebuilt[3], Values{"type": "function_call_output", "call_id": "rebuilt_1", "output": `"HI"`}) {
+		t.Fatalf("a neutral assistant turn is rebuilt without provider state: %#v", rebuilt)
 	}
-	if _, err := ask("/denied", user); err == nil || !strings.Contains(err.Error(), "Anthropic answered 401") || strings.Contains(err.Error(), "private-model-key") {
-		t.Fatalf("an HTTP failure names the status and keeps the key out: %v", err)
+	for _, failure := range []struct {
+		name, message string
+		response      Values
+	}{
+		{"incomplete", "max_output_tokens", Values{"status": "incomplete", "incomplete_details": Values{"reason": "max_output_tokens"}, "output": finalResponse["output"]}},
+		{"failed", "failed", Values{"status": "failed"}},
+		{"cancelled", "cancelled", Values{"status": "cancelled"}},
+		{"pending", "in_progress", Values{"status": "in_progress"}},
+		{"refusal", "refused", Values{"status": "completed", "output": []any{Values{"type": "message", "content": []any{Values{"type": "refusal", "refusal": "declined"}}}}}},
+		{"unfinished item", "unfinished item", Values{"status": "completed", "output": []any{Values{"type": "function_call", "status": "in_progress"}}}},
+		{"commentary only", "no final answer", Values{"status": "completed", "output": output[:2]}},
+		{"empty", "no final answer", Values{"status": "completed", "output": []any{}}},
+		{"invalid arguments", "invalid function arguments", Values{"status": "completed", "output": []any{Values{"type": "function_call", "arguments": "not JSON"}}}},
+		{"nonobject arguments", "invalid function arguments", Values{"status": "completed", "output": []any{Values{"type": "function_call", "arguments": "[]"}}}},
+		{"unsupported item", "unsupported response item", Values{"status": "completed", "output": []any{Values{"type": "custom_tool_call"}}}},
+	} {
+		t.Run(failure.name, func(t *testing.T) {
+			if _, _, err := ask(http.StatusOK, failure.response, user); err == nil || !strings.Contains(err.Error(), failure.message) || !strings.Contains(err.Error(), "; ") || strings.Contains(err.Error(), "Traceback") {
+				t.Fatalf("finish must fail with a reason and action: %v", err)
+			}
+		})
+	}
+	for _, code := range []int{http.StatusUnauthorized, http.StatusServiceUnavailable} {
+		if _, _, err := ask(code, Values{"error": Values{"message": "provider-echo-private-model-key"}}, user); err == nil || !strings.Contains(err.Error(), fmt.Sprintf("OpenAI answered %d", code)) || strings.Contains(err.Error(), "private-model-key") || strings.Contains(err.Error(), "provider-echo") {
+			t.Fatalf("HTTP errors must name the status without echoing secrets or the body: %v", err)
+		}
+	}
+	mu.Lock()
+	status, replies = http.StatusOK, []Values{firstResponse, finalResponse}
+	mu.Unlock()
+	run, err := p.Start(t.Context(), "openai-agent", nil)
+	if err != nil || run.Outputs["answer"] != "It is HI." || len(run.Steps["a"].Steps) != 4 || run.Steps["a"].Steps["2"].Outputs["text"] != "HI" || run.Steps["a"].Steps["3"].Outputs["text"] != "YO" {
+		t.Fatalf("the provider fits the agent's existing model box and ordinary child runs: %+v, %v", run, err)
 	}
 }
