@@ -1,0 +1,8 @@
+doc: Ask an OpenAI model for its next reply; put this in an agent's model box.
+inputs:
+  key: secret
+  model: {type: text, default: gpt-6.1-terra}
+  url: {type: text, default: "https://api.openai.com/v1/responses"}
+  request: object
+outputs: {reply: "object{text: text, calls: list of object}"}
+run: python3 chat.py

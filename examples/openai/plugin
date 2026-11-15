@@ -1,0 +1,5 @@
+name: openai
+version: "1"
+doc: Use an OpenAI model as the model of an agent
+accesses:
+  - Sends the messages and tool descriptions it is given, with your API key, to the address in its url input (api.openai.com unless changed).
