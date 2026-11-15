@@ -130,10 +130,7 @@ func (p *Project) fetchPlugin(ctx context.Context, source string) (Plugin, strin
 	if err != nil {
 		return Plugin{}, "", err
 	}
-	local := source
-	if !filepath.IsAbs(local) {
-		local = filepath.Join(p.dir, local)
-	}
+	local := LocalPath(p.dir, source)
 	if info, statErr := os.Stat(local); statErr == nil && info.IsDir() {
 		source, err = filepath.Rel(p.dir, local)
 		if err == nil {

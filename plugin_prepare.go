@@ -38,17 +38,6 @@ type Editable struct {
 	Choices map[string]string `json:"choices,omitempty"`
 }
 
-// LocalPath expands ~/ and places a relative path in dir.
-func LocalPath(dir, path string) string {
-	if home, _ := os.UserHomeDir(); strings.HasPrefix(path, "~/") {
-		path = filepath.Join(home, path[2:])
-	}
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(dir, path)
-	}
-	return path
-}
-
 func prepareSource(dir string, value any) (Prepared, error) {
 	input, ok := value.(Values)
 	if !ok {
