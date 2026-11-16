@@ -329,3 +329,8 @@ dialog::backdrop { background: var(--backdrop); }
 .react-flow__attribution a { color: inherit; }
 .react-flow__attribution { font-size: var(--text-sm); color: var(--muted); background: var(--clear); padding: 0 var(--space-1); }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
+.shortcuts { width: 600px; }
+.shortcuts h3 { margin: var(--space-4) 0 var(--space-2); font-size: var(--text-sm); color: var(--muted); }
+.shortcuts p { display: grid; grid-template-columns: 240px 1fr; gap: var(--space-3); margin: var(--space-1) 0; }
+.shortcuts kbd { font: inherit; font-weight: 600; }
+.react-flow.panning .react-flow__node, .react-flow.panning .react-flow__node * { cursor: grab; }

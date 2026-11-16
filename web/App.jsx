@@ -1,7 +1,7 @@
 import { useEffect, useReducer, useRef, useState } from 'react';
-import { Canvas, Dialog, Field, useReply } from './Canvas';
+import { Canvas, Dialog, Field, ownsPage, useReply, useShortcuts } from './Canvas';
 import { call, op } from './client';
-import { content, emptyReport, history, inputValues, runMessages, runTrail, runWorkflow, set, workflowDescription } from './model';
+import { content, emptyReport, history, inputValues, keysText, runMessages, runTrail, runWorkflow, set, shortcuts, tip, workflowDescription } from './model';
 import { When } from './When';
 import { Secrets } from './Secrets';
 import { Runs } from './Runs';
@@ -50,6 +50,7 @@ export function App() {
   const [pending, setPending] = useState([]);
   const [confirmation, setConfirmation] = useState(null);
   const [naming, setNaming] = useState(null);
+  const [keys, setKeys] = useState(false);
   const [name, setName] = useState('');
   const latest = useRef({ workflow, opened }), saveButton = useRef(null), runButton = useRef(null), descriptionVisit = useRef({});
   latest.current = { workflow, opened, editing: screen === 'Canvas' && !runId };
@@ -156,23 +157,14 @@ export function App() {
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
   }, []);
-  useEffect(() => {
-    const key = event => {
-      if (event.defaultPrevented) return;
-      const pressed = event.key.toLowerCase();
-      if (!(event.ctrlKey || event.metaKey) || !['s', 'z', 'enter'].includes(pressed)) return;
-      if (pressed === 'z' && (screen !== 'Canvas' || runId || naming || confirmation || preview || enterInputs)) return;
-      event.preventDefault();
-      if (screen !== 'Canvas' || runId || naming || confirmation || preview) return;
-      document.activeElement?.blur();
-      requestAnimationFrame(() => {
-        if (pressed === 'z') dispatch({ type: event.shiftKey ? 'redo' : 'undo' });
-        else if (pressed === 'enter' && runButton.current?.form) runButton.current.form.requestSubmit();
-        else (pressed === 's' ? saveButton : runButton).current?.click();
-      });
-    };
-    window.addEventListener('keydown', key);
-    return () => window.removeEventListener('keydown', key);
+  const idle = () => screen === 'Canvas' && !runId && ownsPage();
+  const press = action => { document.activeElement?.blur(); requestAnimationFrame(action); };
+  useShortcuts({
+    save: () => { if (idle()) press(() => saveButton.current?.click()); },
+    run: () => { if (idle()) press(() => runButton.current?.form ? runButton.current.form.requestSubmit() : runButton.current?.click()); },
+    undo: () => { if (idle() && !enterInputs) press(() => dispatch({ type: 'undo' })); else return false; },
+    redo: () => { if (idle() && !enterInputs) press(() => dispatch({ type: 'redo' })); else return false; },
+    help: () => { if (!ownsPage()) return false; setKeys(true); },
   });
   return <main>
     <header className="app-header"><a className="brand" href="#" onClick={event => event.preventDefault()}>iNode<span>Local workflows</span></a>
@@ -207,13 +199,13 @@ export function App() {
           </>}
         </> : <>
           <button className="quiet" onClick={() => leave(() => replace({ name: '', version: '', workflow: empty }))}>New</button>
-          <button aria-label="Undo" title="Undo (Ctrl/Cmd+Z)" disabled={!edits.past.length} onClick={() => dispatch({ type: 'undo' })}><Icon name="undo" /></button>
-          <button aria-label="Redo" title="Redo (Shift+Ctrl/Cmd+Z)" disabled={!edits.future.length} onClick={() => dispatch({ type: 'redo' })}><Icon name="redo" /></button>
+          <button aria-label="Undo" title={tip('undo')} disabled={!edits.past.length} onClick={() => dispatch({ type: 'undo' })}><Icon name="undo" /></button>
+          <button aria-label="Redo" title={tip('redo')} disabled={!edits.future.length} onClick={() => dispatch({ type: 'redo' })}><Icon name="redo" /></button>
           {returnRun && <button disabled={unsaved} title={unsaved ? 'Save changes first' : undefined} onClick={() => showRun(returnRun, opened.key)}>Back to run</button>}
           <strong>{opened.name || 'New workflow'}</strong>
           <span className="save-state">{unsaved ? 'Unsaved' : opened.version ? 'Saved' : 'Not saved'}</span>
-          <button ref={saveButton} title="Save (Ctrl/Cmd+S)" disabled={pending.includes('save')} onClick={save}>{pending.includes('save') ? 'Saving…' : 'Save'}</button>
-          <button ref={enterInputs ? undefined : runButton} type="button" title={(checked.error || runReason || 'Run') + ' (Ctrl/Cmd+Enter)'} className="primary"
+          <button ref={saveButton} title={tip('save')} disabled={pending.includes('save')} onClick={save}>{pending.includes('save') ? 'Saving…' : 'Save'}</button>
+          <button ref={enterInputs ? undefined : runButton} type="button" title={tip('run', checked.error || runReason || 'Run')} className="primary"
             disabled={runDisabled} onClick={() => requestRun()}>
             <Icon name="run" />{pending.includes('run') ? 'Starting…' : pending.includes('inputs') ? 'Loading inputs…' : 'Run'}
           </button>
@@ -237,7 +229,7 @@ export function App() {
               {messages.filter(message => message.input === name).map((message, i) => <p className="problem" key={i}>{message.message}</p>)}
             </div>;
           })}</div>
-          <div className="row"><button ref={runButton} type="submit" className="primary" disabled={runDisabled} title={(runReason || 'Start run') + ' (Ctrl/Cmd+Enter)'}><Icon name="run" />{pending.includes('run') ? 'Starting…' : 'Start run'}</button>
+          <div className="row"><button ref={runButton} type="submit" className="primary" disabled={runDisabled} title={tip('run', runReason || 'Start run')}><Icon name="run" />{pending.includes('run') ? 'Starting…' : 'Start run'}</button>
             <button type="button" onClick={() => setEnterInputs(false)}>Cancel</button></div>
         </form>}
         {shown?.error && <div className="notice problem">{shown.error}</div>}
@@ -260,6 +252,10 @@ export function App() {
         <Source source={preview.source} showRun={showRun} fail={setError} />
         {error && <p className="notice problem">{error}</p>}
         <Canvas workflow={preview.workflow} catalog={catalog} record={preview} />
+    </Dialog>}
+    {keys && <Dialog className="run-inputs shortcuts" label="Shortcuts" closedby="any" onClose={() => setKeys(false)}>
+      <h2>Shortcuts</h2>{[...new Set(shortcuts.map(row => row.group))].map(group => <section key={group}><h3>{group}</h3>
+        {shortcuts.filter(row => row.group === group).map(row => <p key={row.id}><kbd>{keysText(row)}</kbd>{row.label}</p>)}</section>)}
     </Dialog>}
     {naming && <Dialog className="run-inputs" label="Save workflow" onClose={() => { if (!pending.includes('save')) setNaming(null); }}><form onSubmit={event => { event.preventDefault(); write(name); }}>
       <h2>Save workflow</h2><label>Name<input aria-label="Workflow name" autoFocus required disabled={pending.includes('save')} value={name} onChange={event => setName(event.target.value)} /></label>

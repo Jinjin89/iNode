@@ -37,7 +37,7 @@ export function Value({ value, port = {}, path = [], onUse, level = 0, compact =
       event.preventDefault(); event.stopPropagation(); onUse(path);
     }}>Use this</button>}
   </span>;
-  return <div className={'returned-value nodrag nopan nowheel' + (box(port) ? ' box' : '') + (tree ? '' : ' value-row')} onClick={event => event.stopPropagation()}>
+  return <div className={'returned-value nodrag nopan' + (box(port) ? ' box' : '') + (tree ? '' : ' value-row')} onClick={event => event.stopPropagation()}>
     {tagged && <small className="value-type">{box(port) ? 'Box · ' : ''}{type(port)}</small>}
     {tree ? <details open={open} onToggle={event => setOpen(event.currentTarget.open)}>
       <summary className="value-row">{list ? 'List' : 'Object'} · {entries.length} {list ? 'items' : 'fields'} {actions}</summary>
