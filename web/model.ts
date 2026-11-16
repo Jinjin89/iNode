@@ -80,6 +80,8 @@ export function set(value: any, path: Path, next: any): any {
   return copy;
 }
 
+export const outputPorts = (info: Description): Record<string, Port> => ({ ...Object.fromEntries(Object.keys(info.workflow?.outputs || {}).map(key => [key, 'any'])), ...info.outputs });
+
 export function describe(use: Definition, catalog: Description[]): Description {
   if (typeof use === 'string') return catalog.find(node => node.name === use) || {};
   return { inputs: use.inputs, outputs: Object.fromEntries(Object.keys(use.outputs || {}).map(name => [name, 'any'])) };
@@ -128,8 +130,36 @@ export function add(workflow: Workflow, use: string, position?: { x: number; y: 
   return next;
 }
 
+const after = (path: Path): boolean => path.length === 3 && path[2] === 'after';
+export const created = (before: Workflow, after: Workflow): string => Object.keys(after.steps!).find(name => !before.steps?.[name])!;
+export type Origin = { type: 'source' | 'target'; path: Path };
+export type Candidate = { source: Path; target: Path; port: string };
+
+// Extend a gesture from an existing endpoint: the new step's ports that could sit opposite it, in the order its card shows them.
+export function candidates(name: string, info: Description, origin: Origin): Candidate[] {
+  const { path } = origin, own = ['steps', name];
+  if (origin.type === 'source') {
+    const rests: Path[] = path.length === 1 ? [['after']] : Object.keys(info.inputs || {}).map(key => ['in', key]);
+    return rests.map(rest => ({ source: path, target: [...own, ...rest], port: String(rest.at(-1)) }));
+  }
+  const sources: Path[] = after(path) ? [[name]] : Object.keys(outputPorts(info)).map(key => [name, key]);
+  return sources.map(source => ({ source, target: path, port: String(source[1] ?? 'after') }));
+}
+
+export function extend(workflow: Workflow, use: string, position: { x: number; y: number }, origin: Origin, catalog: Description[]) {
+  const added = add(workflow, use, position), name = created(workflow, added);
+  return { workflow: added, name, tries: candidates(name, describe(use, catalog), origin).map(({ source, target, port }) => ({ workflow: connect(added, source, target), path: target, port })) };
+}
+
+export const quick = { width: 300, height: 320 };
+// Cap the panel to the canvas, then keep it inside without moving the stored insertion point.
+export function place(at: { x: number; y: number }, view: { x: number; y: number; zoom: number }, width: number, height: number) {
+  const w = Math.min(quick.width, width), h = Math.min(quick.height, height);
+  return { left: Math.max(0, Math.min(at.x * view.zoom + view.x, width - w)), top: Math.max(0, Math.min(at.y * view.zoom + view.y, height - h)), width: w, maxHeight: h };
+}
+
 export function connect(workflow: Workflow, source: Path, target: Path): Workflow {
-  if (target.length === 3 && target[2] === 'after') return set(workflow, target, [...(workflow.steps?.[String(target[1])]?.after || []), source[0]]);
+  if (after(target)) return set(workflow, target, [...(workflow.steps?.[String(target[1])]?.after || []), source[0]]);
   return set(workflow, target, '=' + source.join('.'));
 }
 
@@ -326,8 +356,7 @@ export function graph(workflow: Workflow, catalog: Description[], record?: Run, 
     ...Object.entries(workflow.steps || {}).map(([name, step]) => {
       const info = report.nodes[JSON.stringify(['steps', name])] || describe(records[name]?.workflow || step.use, catalog);
       const returned = records[name]?.outputs;
-      const outputs: Record<string, Port> = { ...Object.fromEntries(Object.keys(returned || {}).map(key => [key, 'any'])),
-        ...Object.fromEntries(Object.keys(info.workflow?.outputs || {}).map(key => [key, 'any'])), ...info.outputs };
+      const outputs: Record<string, Port> = { ...Object.fromEntries(Object.keys(returned || {}).map(key => [key, 'any'])), ...outputPorts(info) };
       for (const edge of edges.filter(edge => edge.source === handle(['steps', name]) && edge.className.split(' ')[0] !== 'after')) {
         const output = parseHandle(edge.sourceHandle)[1];
         if (output !== undefined) outputs[output] ||= 'any';
@@ -368,7 +397,7 @@ const shortcutTable: Record<string, [string, string, string][]> = {
     ['rename', 'F2', 'Rename the selected step'], ['copy', 'Mod C', 'Copy the selected steps'], ['cut', 'Mod X', 'Cut the selected steps'], ['paste', 'Mod V', 'Paste steps'],
     ['group', 'Mod G', 'Make a node'], ['undo', 'Mod Z', 'Undo'], ['redo', 'Mod Shift Z / Mod Y', 'Redo'],
   ],
-  'Find and run': [['find', '/', 'Find a node'], ['save', 'Mod S', 'Save'], ['run', 'Mod Enter', 'Run'], ['help', '?', 'Show the shortcuts']],
+  'Find and run': [['find', '/', 'Add a step here'], ['save', 'Mod S', 'Save'], ['run', 'Mod Enter', 'Run'], ['help', '?', 'Show the shortcuts']],
 };
 export const shortcuts = Object.entries(shortcutTable).flatMap(([group, rows]) => rows.map(([id, keys, label]) => ({ id, group, label, keys: keys.split(' / ') })));
 export const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);

@@ -119,6 +119,12 @@ nav { display: flex; gap: var(--space-2); }
 .canvas-layout { display: flex; flex: 1; min-width: 0; min-height: 0; }
 .canvas-main { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
 .drawing { flex: 1; min-width: 0; height: 100%; }
+.quick { position: absolute; z-index: 20; display: flex; flex-direction: column; padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--surface); box-shadow: var(--shadow-float); }
+.quick[aria-busy=true] { opacity: .6; cursor: wait; }
+.quick [role=listbox] { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; margin-top: var(--space-2); }
+.quick [role=option] { padding: var(--space-2) var(--space-3); border-radius: var(--radius); cursor: pointer; }
+.quick [role=option][aria-selected=true] { background: var(--accent-soft); }
+.quick [role=option] strong, .quick [role=option] small { display: block; font-size: var(--text-sm); overflow-wrap: anywhere; }
 .empty-canvas { position: absolute; top: 24px; left: 24px; right: 24px; max-width: 400px; z-index: 2; padding: var(--space-4) var(--space-5); border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--surface); pointer-events: none; }
 .inspector { animation: enter var(--settle) var(--ease); flex: 0 0 340px; padding: var(--space-5) var(--space-4); border-left: 1px solid var(--border); background: var(--surface); overflow: auto; }
 .inspector .close { float: right; padding: var(--space-1); color: var(--muted); }
@@ -231,12 +237,13 @@ nav { display: flex; gap: var(--space-2); }
 .after-source { position: absolute; right: 0; top: 50%; }
 .after-source .react-flow__handle { right: -4px; }
 .after-target { position: absolute; left: 0; top: 50%; }
-.react-flow__handle { background: var(--type-color, var(--type-any)); border: 2px solid var(--surface); width: var(--card-socket); height: var(--card-socket); transition: width var(--fast), height var(--fast), opacity var(--fast); }
+.react-flow__handle { background: var(--type-color, var(--type-any)); border: 2px solid var(--surface); width: var(--card-socket); height: var(--card-socket); transition: box-shadow var(--fast), opacity var(--fast); }
 .react-flow__handle::before { content: ''; position: absolute; inset: -8px; }
-.react-flow__handle:hover { width: calc(var(--card-socket) + 2px); height: calc(var(--card-socket) + 2px); }
+.react-flow__handle:hover { box-shadow: 0 0 0 3px var(--accent-soft); }
 .field > .react-flow__handle, .box > .react-flow__handle, .field-fields > .react-flow__handle { left: calc(-1 * var(--card-socket)); }
 .box > .react-flow__handle, .field-fields > .react-flow__handle { top: 0; }
 .output > .react-flow__handle { right: -6px; }
+.react-flow__handle.connectingto.valid { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft), 0 0 0 5px var(--accent); }
 .after-target .react-flow__handle, .after-source .react-flow__handle { width: 8px; height: 8px; background: var(--surface); border: 1px solid var(--muted); border-radius: var(--radius-sm); opacity: 0; pointer-events: none; }
 .step:is(:hover, :focus-within, [data-after=true]) :is(.after-target, .after-source) .react-flow__handle,
 .react-flow__node.selected :is(.after-target, .after-source) .react-flow__handle,
@@ -333,4 +340,5 @@ dialog::backdrop { background: var(--backdrop); }
 .shortcuts h3 { margin: var(--space-4) 0 var(--space-2); font-size: var(--text-sm); color: var(--muted); }
 .shortcuts p { display: grid; grid-template-columns: 240px 1fr; gap: var(--space-3); margin: var(--space-1) 0; }
 .shortcuts kbd { font: inherit; font-weight: 600; }
+.react-flow:focus { outline: none; }
 .react-flow.panning .react-flow__node, .react-flow.panning .react-flow__node * { cursor: grab; }
