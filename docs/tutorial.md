@@ -22,7 +22,7 @@ A **plugin** is a folder of more nodes.
 ```
 
 ## Try it
-Click a step to edit it and Escape to close it; double-click its name to rename it. Press ? for all shortcuts. Shift+click steps, **Make a node**, open it, then **Save as** to reuse it.
+Click a step to edit it and Escape to close it; double-click its name to rename it. Press ? or Ctrl/⌘+K for all shortcuts. Shift+click steps, **Make a node**, open it, then **Save as** to reuse it.
 
 **1. Start a project.**
 - Copy `examples/` to your own folder.

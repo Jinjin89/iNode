@@ -397,7 +397,7 @@ const shortcutTable: Record<string, [string, string, string][]> = {
     ['rename', 'F2', 'Rename the selected step'], ['copy', 'Mod C', 'Copy the selected steps'], ['cut', 'Mod X', 'Cut the selected steps'], ['paste', 'Mod V', 'Paste steps'],
     ['group', 'Mod G', 'Make a node'], ['undo', 'Mod Z', 'Undo'], ['redo', 'Mod Shift Z / Mod Y', 'Redo'],
   ],
-  'Find and run': [['find', '/', 'Add a step here'], ['save', 'Mod S', 'Save'], ['run', 'Mod Enter', 'Run'], ['help', '?', 'Show the shortcuts']],
+  'Find and run': [['find', '/', 'Add a step here'], ['save', 'Mod S', 'Save'], ['run', 'Mod Enter', 'Run'], ['help', '? / Mod K', 'Show the shortcuts']],
 };
 export const shortcuts = Object.entries(shortcutTable).flatMap(([group, rows]) => rows.map(([id, keys, label]) => ({ id, group, label, keys: keys.split(' / ') })));
 export const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
@@ -415,3 +415,4 @@ export function shortcut(event: KeyEvent, typed = false, mac = isMac): string | 
 
 export const keysText = (row: { keys: string[] }, mac = isMac): string => row.keys.map(keys => keys.split(' ').map(part => part === 'Mod' ? mac ? '⌘' : 'Ctrl' : part.replace('Digit', '')).join('+')).join(' / ');
 export const tip = (id: string, label?: string, mac = isMac): string => { const row = shortcuts.find(row => row.id === id)!; return (label ?? row.label) + ' (' + keysText(row, mac) + ')'; };
+export const findShortcuts = (query: string, mac = isMac) => shortcuts.filter(row => (row.label + ' ' + keysText(row, mac)).toLowerCase().includes(query.trim().toLowerCase()));

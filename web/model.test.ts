@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { add, box, candidates, extend, place, quick, canReference, connect, connectionProblem, content, copyText, commandText, duration, emptyReport, emptyValue, expose, copy, paste, clipboard, shortcut, shortcuts, keysText, tip, filterRuns, graph, group, groups, handle, history, inputValues, kind, move, parseHandle, layout, reference, rename, runMessages, runTrail, runWorkflow, reveal, set, textPreview, type, workflowDescription, fileInput, fileLabel, fileValue, type Workflow, type Description, type Reference, type History, type Run } from './model';
+import { add, box, candidates, extend, place, quick, canReference, connect, connectionProblem, content, copyText, commandText, duration, emptyReport, emptyValue, expose, copy, paste, clipboard, shortcut, shortcuts, findShortcuts, keysText, tip, filterRuns, graph, group, groups, handle, history, inputValues, kind, move, parseHandle, layout, reference, rename, runMessages, runTrail, runWorkflow, reveal, set, textPreview, type, workflowDescription, fileInput, fileLabel, fileValue, type Workflow, type Description, type Reference, type History, type Run } from './model';
 
 it('shows literal program arguments as a command with safe quoting', () => {
   expect(commandText(['python3', 'counter.py'])).toBe('python3 counter.py');
@@ -567,6 +567,16 @@ describe('shortcuts', () => {
     expect(tip('redo', undefined, true)).toBe('Redo (⌘+Shift+Z / ⌘+Y)');
     expect(keysText(shortcuts.find(row => row.id === 'fit')!)).toBe('Shift+1');
     expect(new Set(shortcuts.map(row => row.id)).size).toBe(shortcuts.length);
+  });
+
+  it('opens help with ? or Mod K, but not in a field, and finds rows by label or key text', () => {
+    expect([shortcut(key('?', { shiftKey: true })), shortcut(key('k', { ctrlKey: true }), false, false)]).toEqual(['help', 'help']);
+    expect([shortcut(key('?', { shiftKey: true }), true), shortcut(key('k', { ctrlKey: true }), true, false)]).toEqual([undefined, undefined]);
+    expect(findShortcuts('')).toEqual(shortcuts);
+    expect(findShortcuts(' UNDO ').map(row => row.id)).toEqual(['undo']);
+    expect(findShortcuts('ctrl+k', false).map(row => row.id)).toEqual(['help']);
+    expect(findShortcuts('⌘+y', true).map(row => row.id)).toEqual(['redo']);
+    expect(findShortcuts('nothing like this')).toEqual([]);
   });
 });
 

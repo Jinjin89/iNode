@@ -1,7 +1,7 @@
 import { useEffect, useReducer, useRef, useState } from 'react';
 import { Canvas, Dialog, Field, ownsPage, useReply, useShortcuts } from './Canvas';
 import { call, op } from './client';
-import { content, emptyReport, history, inputValues, keysText, runMessages, runTrail, runWorkflow, set, shortcuts, tip, workflowDescription } from './model';
+import { content, emptyReport, history, inputValues, findShortcuts, keysText, runMessages, runTrail, runWorkflow, set, tip, workflowDescription } from './model';
 import { When } from './When';
 import { Secrets } from './Secrets';
 import { Runs } from './Runs';
@@ -172,7 +172,8 @@ export function App() {
         if (!valid()) return;
         setScreen(name);
       }}>{name}</button>)}</nav>
-      <button className={'guide-toggle ' + (guide ? 'active' : 'quiet')} aria-expanded={!!guide} onClick={() => setGuide(!guide)}>Guide</button>
+      <div className="row"><button className="help-toggle quiet" title={tip('help')} onClick={() => setKeys(true)}>Shortcuts</button>
+        <button className={guide ? 'active' : 'quiet'} aria-expanded={!!guide} onClick={() => setGuide(!guide)}>Guide</button></div>
     </header>
     {error && !naming && <div className="notice problem" role="alert">{error}<button className="quiet" onClick={() => setError('')} title="Close"><Icon name="close" />Close</button></div>}
     <div className="page-content">{screen === 'Canvas' ? <div className="workspace">
@@ -254,8 +255,7 @@ export function App() {
         <Canvas workflow={preview.workflow} catalog={catalog} record={preview} />
     </Dialog>}
     {keys && <Dialog className="run-inputs shortcuts" label="Shortcuts" closedby="any" onClose={() => setKeys(false)}>
-      <h2>Shortcuts</h2>{[...new Set(shortcuts.map(row => row.group))].map(group => <section key={group}><h3>{group}</h3>
-        {shortcuts.filter(row => row.group === group).map(row => <p key={row.id}><kbd>{keysText(row)}</kbd>{row.label}</p>)}</section>)}
+      <Shortcuts />
     </Dialog>}
     {naming && <Dialog className="run-inputs" label="Save workflow" onClose={() => { if (!pending.includes('save')) setNaming(null); }}><form onSubmit={event => { event.preventDefault(); write(name); }}>
       <h2>Save workflow</h2><label>Name<input aria-label="Workflow name" autoFocus required disabled={pending.includes('save')} value={name} onChange={event => setName(event.target.value)} /></label>
@@ -267,4 +267,14 @@ export function App() {
       <div className="row"><button autoFocus onClick={() => setConfirmation(null)}>{confirmation.cancel}</button><button className="primary" onClick={() => { const action = confirmation.action; setConfirmation(null); action(); }}>{confirmation.label}</button></div>
     </Dialog>}
   </main>;
+}
+
+function Shortcuts() {
+  const [query, setQuery] = useState(''), rows = findShortcuts(query);
+  return <>
+    <h2>Shortcuts</h2><input aria-label="Filter shortcuts" placeholder="Filter shortcuts" autoFocus value={query} onChange={event => setQuery(event.target.value)} />
+    {[...new Set(rows.map(row => row.group))].map(group => <section key={group}><h3>{group}</h3>
+      {rows.filter(row => row.group === group).map(row => <p key={row.id}><kbd>{keysText(row)}</kbd>{row.label}</p>)}</section>)}
+    {!rows.length && <p>No shortcut matches</p>}
+  </>;
 }
