@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { add, box, canReference, connect, connectionProblem, content, copyText, commandText, duration, emptyReport, emptyValue, expose, filterRuns, graph, group, groups, handle, history, inputValues, kind, move, parseHandle, layout, reference, rename, runMessages, runTrail, runWorkflow, reveal, set, textPreview, type, workflowDescription, fileInput, fileLabel, fileValue, type Workflow, type Description, type Reference, type History, type Run } from './model';
+import { add, box, canReference, connect, connectionProblem, content, copyText, commandText, duration, emptyReport, emptyValue, expose, copy, paste, clipboard, shortcut, shortcuts, keysText, tip, filterRuns, graph, group, groups, handle, history, inputValues, kind, move, parseHandle, layout, reference, rename, runMessages, runTrail, runWorkflow, reveal, set, textPreview, type, workflowDescription, fileInput, fileLabel, fileValue, type Workflow, type Description, type Reference, type History, type Run } from './model';
 
 it('shows literal program arguments as a command with safe quoting', () => {
   expect(commandText(['python3', 'counter.py'])).toBe('python3 counter.py');
@@ -93,16 +93,22 @@ describe('document edits', () => {
       { ...refs[1], path: ['steps', 'm', 'in', 'over', '1', 'a.b'] },
       { ...refs[1], path: ['steps', 'm', 'in', 'do', 'in', 'x'] },
     ];
-    const renamed = rename(flow, 'steps', 'a', 'upper', { ...report, references: [...refs, ...extra] });
+    const renamed = rename(flow, 'steps', { a: 'upper' }, { ...report, references: [...refs, ...extra] });
     expect(renamed.steps!.b.in!.text).toBe('=upper.text');
     expect(renamed.steps!.b.after).toEqual(['upper']);
     expect(renamed.steps!.m.in!.over).toEqual(['=upper.text', { 'a.b': '=upper.text' }]);
     expect(renamed.steps!.m.in!.do.in.x).toBe('=upper.text');
     expect(renamed.steps!.m.in!.do.use.outputs.text).toBe('=a.text');
-    expect(rename(tiny, 'inputs', 'text', 'word', report).steps?.a.in?.text).toBe('=inputs.word');
-    expect(rename(tiny, 'outputs', 'text', 'word', report).outputs).toEqual({ word: '=b.text' });
+    const chain = { steps: { a: { use: 'x', in: { t: '=inputs.i' } }, b: { use: 'y', in: { t: '=a.o', u: '=a.o' }, after: ['a'] } }, view: { positions: { [handle(['steps', 'a'])]: { x: 1, y: 2 }, [handle(['steps', 'b'])]: { x: 3, y: 4 } } } };
+    const links = { ...report, references: [{ ...refs[0], path: ['steps', 'b', 'in', 't'], from: ['a', 'o'] }, { ...refs[0], path: ['steps', 'b', 'in', 'u'], from: ['a', 'o'] }] };
+    const chained = rename(chain, 'steps', { a: 'b', b: 'c' }, links);
+    expect(Object.keys(chained.steps!)).toEqual(['b', 'c']);
+    expect(chained.steps!.c).toEqual({ use: 'y', in: { t: '=b.o', u: '=b.o' }, after: ['b'] });
+    expect(chained.view!.positions).toEqual({ [handle(['steps', 'b'])]: { x: 1, y: 2 }, [handle(['steps', 'c'])]: { x: 3, y: 4 } });
+    expect(rename(tiny, 'inputs', { text: 'word' }, report).steps?.a.in?.text).toBe('=inputs.word');
+    expect(rename(tiny, 'outputs', { text: 'word' }, report).outputs).toEqual({ word: '=b.text' });
     const positioned = set(tiny, ['view', 'positions', handle(['steps', 'a'])], { x: 10, y: 20 });
-    expect(rename(positioned, 'steps', 'a', 'c', report).view?.positions).toEqual({ [handle(['steps', 'c'])]: { x: 10, y: 20 } });
+    expect(rename(positioned, 'steps', { a: 'c' }, report).view?.positions).toEqual({ [handle(['steps', 'c'])]: { x: 10, y: 20 } });
   });
 });
 
@@ -257,7 +263,7 @@ describe('document to graph', () => {
     expect(before.nodes[1].style).toMatchObject({ width: 190, height: 96 });
   });
   it('does not restore a renamed input from the previous check report', () => {
-    const renamed = rename(tiny, 'inputs', 'text', 'word', report);
+    const renamed = rename(tiny, 'inputs', { text: 'word' }, report);
     const checked = { ...report, nodes: { null: { inputs: { text: { type: 'text', kind: 'text' } } } } };
     expect(graph(renamed, catalog, undefined, checked).nodes[0].data).toMatchObject({ ports: { word: 'text' } });
     const root = graph(renamed, catalog, undefined, checked).nodes[0].data;
@@ -470,5 +476,141 @@ describe('layout', () => {
     expect(positions[input]).toEqual({ x: 0, y: 0 });
     expect(positions[output]).toEqual({ x: 1010, y: 0 });
     expect(Object.values(layout(['a', 'b'], [{ source: 'a', target: 'b' }, { source: 'b', target: 'a' }]).positions).every(p => Number.isFinite(p.x))).toBe(true);
+  });
+});
+
+describe('shortcuts', () => {
+  const key = (key: string, rest: Partial<{ code: string; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean; altKey: boolean }> = {}) => ({ key, code: '', ctrlKey: false, metaKey: false, shiftKey: false, altKey: false, ...rest });
+
+  it('uses Control elsewhere and Command on a Mac, and no other modifier', () => {
+    expect(shortcut(key('s', { ctrlKey: true }), false, false)).toBe('save');
+    expect(shortcut(key('s', { metaKey: true }), false, false)).toBeUndefined();
+    expect(shortcut(key('s', { metaKey: true }), false, true)).toBe('save');
+    expect(shortcut(key('s', { ctrlKey: true }), false, true)).toBeUndefined();
+    expect(shortcut(key('s'), false, false)).toBeUndefined();
+    expect(shortcut(key('s', { ctrlKey: true, altKey: true }), false, false)).toBeUndefined();
+    expect(shortcut(key('F2', { altKey: true }), false, false)).toBeUndefined();
+    expect(shortcut(key('Z', { ctrlKey: true, shiftKey: true }), false, false)).toBe('redo');
+    expect(shortcut(key('y', { ctrlKey: true }), false, false)).toBe('redo');
+    expect(shortcut(key('z', { ctrlKey: true }), false, false)).toBe('undo');
+  });
+
+  it('matches the physical key for digits and the typed character for symbols', () => {
+    expect(shortcut(key('!', { code: 'Digit1', shiftKey: true }))).toBe('fit');
+    expect(shortcut(key('&', { code: 'Digit1', shiftKey: true }))).toBe('fit');
+    expect(shortcut(key('1', { code: 'Digit1' }))).toBeUndefined();
+    expect(shortcut(key('@', { code: 'Digit2', shiftKey: true }))).toBe('fitSelected');
+    expect(shortcut(key('?', { shiftKey: true }))).toBe('help');
+    expect(shortcut(key('+', { shiftKey: true }))).toBe('zoomIn');
+    expect(shortcut(key('='))).toBe('zoomIn');
+    expect(shortcut(key('+', { ctrlKey: true }), false, false)).toBeUndefined();
+  });
+
+  it('ignores keys while typing apart from save, run and close', () => {
+    expect(shortcut(key('Delete'), true)).toBeUndefined();
+    expect(shortcut(key('/'), true)).toBeUndefined();
+    expect(shortcut(key('a', { ctrlKey: true }), true, false)).toBeUndefined();
+    expect(shortcut(key('z', { ctrlKey: true }), true, false)).toBeUndefined();
+    expect(['s', 'Enter'].map(name => shortcut(key(name, { ctrlKey: true }), true, false))).toEqual(['save', 'run']);
+    expect(shortcut(key('Escape'), true)).toBe('close');
+    expect(shortcut(key('Delete'))).toBe('delete');
+  });
+
+  it('writes keys for the platform, and every shortcut has one home in the table', () => {
+    expect(tip('save', undefined, false)).toBe('Save (Ctrl+S)');
+    expect(tip('redo', undefined, true)).toBe('Redo (⌘+Shift+Z / ⌘+Y)');
+    expect(keysText(shortcuts.find(row => row.id === 'fit')!)).toBe('Shift+1');
+    expect(new Set(shortcuts.map(row => row.id)).size).toBe(shortcuts.length);
+  });
+});
+
+describe('copy and paste', () => {
+  const at = (id: string) => handle(['steps', id]);
+  const flow: Workflow = {
+    inputs: { word: 'text' },
+    steps: {
+      source: { use: 'source' },
+      a: { use: 'first', in: { data: ['=source.out', '=inputs.word', 'kept'], plain: 'written' }, after: ['source'] },
+      b: { use: 'second', in: { value: '=a.value', list: ['=a.value', '=source.out'], box: { use: { steps: { a: { use: 'x', in: { v: '=a.v' } } } }, in: { w: '=a.value' } } }, after: ['a', 'source'] },
+    },
+    outputs: {},
+  };
+  const refer = (path: (string | number)[], from: string[]) => ({ step: '(inline)', input: '', path, from });
+  const report = { ...emptyReport, references: [
+    refer(['steps', 'a', 'in', 'data', 0], ['source', 'out']), refer(['steps', 'a', 'in', 'data', 1], ['inputs', 'word']),
+    refer(['steps', 'b', 'in', 'value'], ['a', 'value']), refer(['steps', 'b', 'in', 'list', 0], ['a', 'value']), refer(['steps', 'b', 'in', 'list', 1], ['source', 'out']),
+    refer(['steps', 'b', 'in', 'box', 'in', 'w'], ['a', 'value']),
+  ] };
+  const positions = { [at('source')]: { x: 0, y: 0 }, [at('a')]: { x: 300, y: 100 }, [at('b')]: { x: 500, y: 140 } };
+
+  it('keeps references between the copied steps and drops every other reference', () => {
+    const clip = JSON.parse(copy(flow, ['a', 'b'], report, positions));
+    expect(clip.steps.a).toEqual({ use: 'first', in: { data: ['kept'], plain: 'written' }, after: [] });
+    expect(clip.steps.b.in.value).toBe('=a.value');
+    expect(clip.steps.b.in.list).toEqual(['=a.value']);
+    expect(clip.steps.b.in.box.in.w).toBe('=a.value');
+    expect(clip.steps.b.after).toEqual(['a']);
+    expect(clip.view.positions).toEqual({ [at('a')]: { x: 300, y: 100 }, [at('b')]: { x: 500, y: 140 } });
+    expect(flow.steps!.a.in!.data).toHaveLength(3);
+  });
+
+  const clipReport = { ...emptyReport, references: [
+    refer(['steps', 'b', 'in', 'value'], ['a', 'value']), refer(['steps', 'b', 'in', 'list', 0], ['a', 'value']), refer(['steps', 'b', 'in', 'box', 'in', 'w'], ['a', 'value']),
+    refer(['steps', 'b', 'in', 'data', 'use', 'label'], ['a', 'value']),
+  ] };
+  const clip = (...ids: string[]) => clipboard(copy(flow, ids, report, positions))!;
+
+  it('pastes under new names, follows references and after between them, and keeps the layout as a group', () => {
+    const both = clipboard(copy(flow, ['a', 'b'], report, positions).replace('"box"', '"data":{"use":{"label":"=a.value"}},"box"'))!;
+    const result = paste(flow, both, clipReport, { x: 1000, y: 50 });
+    expect(result.names).toEqual(['a2', 'b2']);
+    expect(result.workflow.steps!.b2.in!.value).toBe('=a2.value');
+    expect(result.workflow.steps!.b2.in!.list).toEqual(['=a2.value']);
+    expect(result.workflow.steps!.b2.in!.box.in.w).toBe('=a2.value');
+    expect(result.workflow.steps!.b2.in!.data.use.label).toBe('=a2.value');
+    expect((result.workflow.steps!.b2.in!.box.use as Workflow).steps!.a.in).toEqual({ v: '=a.v' });
+    expect(result.workflow.steps!.b2.after).toEqual(['a2']);
+    expect(result.workflow.view!.positions).toEqual({ [at('a2')]: { x: 1000, y: 50 }, [at('b2')]: { x: 1200, y: 90 } });
+    expect(Object.keys(result.workflow.steps!)).toEqual(['source', 'a', 'b', 'a2', 'b2']);
+  });
+
+  it('offsets the group from the originals without a pointer, and keeps names that are free', () => {
+    const result = paste({ ...flow, steps: { source: flow.steps!.source } }, clip('b'), emptyReport);
+    expect(result.names).toEqual(['b']);
+    expect(result.workflow.view!.positions).toEqual({ [at('b')]: { x: 532, y: 172 } });
+  });
+
+  it('places steps without clipboard positions by the layout, and the group under the pointer', () => {
+    const plain = clipboard('{"steps": {"x": {"use": "text.upper"}, "y": {"use": "text.upper", "in": {"text": "=x.text"}}}, "view": {"positions": {"nonsense": 5}}}')!;
+    const result = paste({}, plain, { ...emptyReport, references: [refer(['steps', 'y', 'in', 'text'], ['x', 'text'])] }, { x: 1000, y: 500 });
+    const spots = Object.values(result.workflow.view!.positions) as { x: number; y: number }[];
+    expect(Math.min(...spots.map(spot => spot.x))).toBe(1000);
+    expect(Math.min(...spots.map(spot => spot.y))).toBe(500);
+    expect(new Set(spots.map(spot => spot.x)).size).toBe(2);
+  });
+
+  it('leaves other text alone, refuses steps it cannot draw, and passes the rest to the checker', () => {
+    expect(clipboard('{"steps": {"x": {"use": "text.upper", "in": {"text": "=source.out"}}}}')!.steps).toEqual({ x: { use: 'text.upper', in: { text: '=source.out' } } });
+    for (const text of ['hello', '', 'null', '[]', '{"steps": {}}', '{"steps": 5}', '{"steps": []}']) expect(clipboard(text)).toBeUndefined();
+    for (const text of ['{"steps": {"x": 5}}', '{"steps": {"x": null}}', '{"steps": {"x": {"in": {}}}}', '{"steps": {"x": {"use": null}}}']) expect(() => clipboard(text)).toThrow('use');
+    expect(clipboard('{"steps": {"x": {"use": "u", "after": "a"}}}')!.steps!.x.after).toBe('a');
+    expect(clipboard('{"steps": {"x": {"use": "u"}}, "view": {"positions": {"a": {"x": "bad", "y": 1}, "b": {"x": 1, "y": 2}}}}')!.view!.positions).toEqual({ b: { x: 1, y: 2 } });
+  });
+
+  it('keeps a step named __proto__ and follows references to it', () => {
+    const target = set({}, ['steps', '__proto__'], { use: 'z' });
+    const text = '{"steps": {"__proto__": {"use": "x"}, "b": {"use": "y", "in": {"t": "=__proto__.o"}}}}';
+    const result = paste(target, clipboard(text)!, { ...emptyReport, references: [refer(['steps', 'b', 'in', 't'], ['__proto__', 'o'])] });
+    expect(result.names).toEqual(['__proto__2', 'b']);
+    expect(Object.keys(result.workflow.steps!)).toEqual(['__proto__', '__proto__2', 'b']);
+    expect(result.workflow.steps!.b.in!.t).toBe('=__proto__2.o');
+  });
+
+  it('is one history edit and undo restores the exact document', () => {
+    const before = JSON.stringify(flow);
+    const pasted = history({ present: flow, past: [], future: [] }, { type: 'edit', value: paste(flow, clip('a', 'b'), clipReport).workflow });
+    expect(pasted.past).toHaveLength(1);
+    expect(JSON.stringify(history(pasted, { type: 'undo' }).present)).toBe(before);
+    expect(JSON.stringify(flow)).toBe(before);
   });
 });

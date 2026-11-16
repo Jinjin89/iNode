@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
-import { Background, ControlButton, Controls, Handle, Position, ReactFlow, ReactFlowProvider, applyNodeChanges, getNodesBounds, getViewportForBounds, useStore, useReactFlow, useUpdateNodeInternals } from '@xyflow/react';
-import { add, content, graph, group, handle, parseHandle, problems, rename, set, type, kind, box, inputs as nodeInputs, reference, connect, emptyReport, emptyValue, expose, move, groups, connectionProblem, unique, workflowDescription, nodeName, reveal, cardGeometry, fileInput, fileLabel, fileValue } from './model';
+import { Background, ControlButton, Controls, Handle, Position, ReactFlow, ReactFlowProvider, applyNodeChanges, getNodesBounds, getViewportForBounds, useKeyPress, useStore, useReactFlow, useUpdateNodeInternals } from '@xyflow/react';
+import { add, content, graph, group, handle, parseHandle, problems, rename, set, type, kind, box, inputs as nodeInputs, reference, connect, emptyReport, emptyValue, expose, move, groups, connectionProblem, unique, workflowDescription, nodeName, reveal, cardGeometry, fileInput, fileLabel, fileValue, copy, paste, clipboard, shortcut, tip } from './model';
 import { call, op } from './client';
 import { Duration, Value } from './Value';
 import { Icon } from './Icon';
@@ -41,22 +41,38 @@ export function useProposal(workflow, onEdit, scope = '(inline)') {
       }
     } catch (error) { show(error.message); }
   };
-  return [notice, propose];
+  return [notice, propose, message => setNotice({ message })];
 }
 
-export function Dialog({ label, onClose, className, children }) {
+const watchers = new Set(), watch = watcher => { watchers.add(watcher); return () => watchers.delete(watcher); };
+export const owner = () => [...document.querySelectorAll('dialog[open]')].at(-1) ?? null;
+export const ownsPage = () => !owner() || !!owner().querySelector('.canvas-layout[data-editable]');
+
+export function useShortcuts(handlers, own = () => true) {
+  useEffect(() => {
+    const key = event => {
+      if (event.defaultPrevented || !own()) return;
+      const act = handlers[shortcut(event, !!event.target.closest('input, textarea, select, [contenteditable]'))];
+      if (act && act(event) !== false) event.preventDefault();
+    };
+    window.addEventListener('keydown', key);
+    return () => window.removeEventListener('keydown', key);
+  });
+}
+
+export function Dialog({ label, onClose, className, closedby, children }) {
   const ref = useRef(null);
-  useEffect(() => { const dialog = ref.current; dialog.showModal(); return () => dialog.close(); }, []);
-  return createPortal(<dialog ref={ref} className={'nokey ' + className} aria-label={label} onClick={event => event.stopPropagation()} onCancel={event => { event.preventDefault(); onClose(); }}>{children}</dialog>, document.body);
+  useEffect(() => { const dialog = ref.current; dialog.showModal(); watchers.forEach(watcher => watcher()); return () => { dialog.close(); watchers.forEach(watcher => watcher()); }; }, []);
+  return createPortal(<dialog ref={ref} className={className} aria-label={label} closedby={closedby} onClick={event => event.stopPropagation()} onDragOver={event => event.stopPropagation()} onDrop={event => event.stopPropagation()} onCancel={event => { event.preventDefault(); onClose(); }}>{children}</dialog>, document.body);
 }
 
 function InlineEditor({ workflow, onEdit, catalog, onOpen, onSave, onUse, trail = ['Workflow'], label, children }) {
   const [opened, open] = useState(false);
   return <><button type="button" className="open-box nodrag" onClick={() => open(true)}>Open · Steps: {Object.keys(workflow.steps || {}).length}</button>
-    {opened && <Dialog className="box-editor nodrag nopan nowheel" label="Inline workflow" onClose={() => open(false)}>
+    {opened && <Dialog className="box-editor" label="Inline workflow" onClose={() => open(false)}>
       <div className="toolbar"><nav aria-label="Workflow path">{trail.join(' › ')} › <strong aria-current="page">{label}</strong></nav>
         {onSave && <button type="button" onClick={() => onSave(workflow, async name => { const accepted = await onUse(name); open(false); return accepted; })}>Save as</button>}
-        <button type="button" title="Back (Escape)" onClick={() => open(false)}>Back</button></div>
+        <button type="button" title={tip('close', 'Back')} onClick={() => open(false)}>Back</button></div>
       {children}<Canvas workflow={workflow} catalog={catalog} onEdit={onEdit} onOpen={onOpen} onSave={onSave} trail={[...trail, label]} />
     </Dialog>}
   </>;
@@ -72,7 +88,12 @@ export function NodeList({ catalog, onAdd, onOpen, opening }) {
   useReply(detail && op.show, [detail?.name], setDescribed, setError);
   const info = described?.name === detail?.name ? described : detail;
   return <aside className="catalog" onMouseLeave={() => showDetail(null)} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) showDetail(null); }}>
-    <h2>Nodes</h2><input aria-label="Find a node" placeholder="Find a node…" value={search} onChange={event => setSearch(event.target.value)} />
+    <h2>Nodes</h2><input aria-label="Find a node" placeholder={tip('find', 'Find a node…')} value={search} onChange={event => setSearch(event.target.value)}
+      onKeyDown={event => {
+        const first = groups(catalog, search)[0]?.[1][0];
+        if (event.key === 'Enter' && first && onAdd && !event.nativeEvent.isComposing && !(event.ctrlKey || event.metaKey || event.shiftKey || event.altKey)) { event.preventDefault(); onAdd(first.name); }
+        if (event.key === 'Escape') { event.preventDefault(); event.currentTarget.blur(); }
+      }} />
     <p>{onAdd ? 'Click a node to add a step, or drag it onto the canvas or a box.' : 'Inspect a node’s inputs and outputs here, or open a workflow to edit it.'}</p>
     <div className="node-list">{groups(catalog, search).map(([group, nodes]) => <section key={group}><h3>{group}</h3>{nodes.map(node =>
       <div className="node-entry" key={node.name} onMouseEnter={() => showDetail(node)} onFocus={() => showDetail(node)}>
@@ -129,7 +150,7 @@ export function Field({ label, port = {}, value, onChange, catalog = [], path = 
   const tools = label === undefined && actions;
   const frame = field => label === undefined ? field : <div className="field-entry"><FieldLabel label={label} port={port} actions={actions} />{field}</div>;
   const handle = socket?.(path, port, closed || !onChange || !structured && !box(port));
-  if (closed) return <div className={'field summary nodrag' + (references && reference(shownValue) ? ' linked' : '')} {...drop}>
+  if (closed) return <div className={'field summary' + (references && reference(shownValue) ? ' linked' : '')} {...drop}>
     {handle}<Value value={onChange ? shown : value} port={port} compact />
   </div>;
   if (references && reference(shownValue)) return frame(<div className={'field linked ' + (box(port) ? 'box' : '')} {...drop}>{handle}<code>{shownValue}</code>{tools}</div>);
@@ -143,7 +164,7 @@ export function Field({ label, port = {}, value, onChange, catalog = [], path = 
     const fields = childSocket => Object.entries({ ...nodeInputs(step.use, step.in, catalog), ...descriptions[JSON.stringify(path)]?.inputs }).map(([name, port]) => <div className="port" key={name}>
       {child([...path, 'in', name], port, step.in?.[name], (next, group) => onChange(current => set(asStep(current ?? shownValue), ['in', name], next), group), childSocket, { label: name, placeholder: 'Given when the box is called' })}
     </div>);
-    return frame(<div className="box nodrag nowheel" {...drop}>
+    return frame(<div className="box nodrag" {...drop}>
       {handle}<div className="box-title">Box</div>
       <select aria-label="Node in box" required={required} value={inline ? 'inline' : step?.use ? 'node:' + step.use : ''} onChange={event => onChange({
         use: event.target.value === 'inline' ? { inputs: {}, steps: {}, outputs: {} } : event.target.value.slice(5),
@@ -163,7 +184,7 @@ export function Field({ label, port = {}, value, onChange, catalog = [], path = 
     const list = shape === 'list';
     const values = shownValue || (list ? [] : {});
     const entries = list ? values.map((_, i) => [i, port.item]) : Object.entries(port.fields);
-    return frame(<div className="field-fields nodrag nowheel">{handle}
+    return frame(<div className="field-fields nodrag">{handle}
       {shownValue === undefined && placeholder && <small>{placeholder}</small>}
       {entries.map(([name, item]) => <div className={'field-row ' + (list ? 'list-item' : '')} key={name}>
       {child([...path, String(name)], item, values[name], (next, group) => onChange(current => set(current ?? values, [name], next), group), socket, { label: list ? undefined : name, item: list, children: list && <>
@@ -196,7 +217,6 @@ export function Field({ label, port = {}, value, onChange, catalog = [], path = 
       }
     },
     onKeyDown: event => {
-      if (error && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') event.stopPropagation();
       if (!json && event.key === 'Enter') event.currentTarget.blur();
     },
   };
@@ -251,11 +271,11 @@ function Step({ id, data, width, height }) {
   const title = kind === 'step' ? name : kind === 'inputs' ? 'Inputs' : 'Outputs';
   const problem = record?.error || at('use').map(problem => problem.message).join('\n');
   return <article ref={card} tabIndex={-1} title={problem || undefined} data-after={!!ordered} data-state={record?.state} className={'step ' + (open ? 'open ' : 'closed ') + (kind === 'step' ? record?.state || '' : '') + (issues.length ? ' has-problem' : '')}>
-    <header>{open && kind === 'step' ? <>
+    <header>{open && kind === 'step' && focus === 'name' ?
       <Named label="Step name" name={name} names={Object.keys(workflow.steps)} onChange={edit && fresh && (next => {
-        if (next !== name && choose({ ids: [handle(['steps', next])] })) edit(current => rename(current, 'steps', name, next, report));
-      })} /><button className="quiet nodrag" aria-label="Delete step" title="Delete step (Delete / Backspace)" onClick={remove}><Icon name="delete" /></button>
-    </> : <strong title={problem || title}>{title}</strong>}{kind === 'step' && record && <span className="step-status"><span className={'state ' + record.state}>{record.state}</span><Duration record={record} /></span>}</header>
+        if (choose({ ids: [handle(['steps', next])] }) && next !== name) edit(current => rename(current, 'steps', { [name]: next }, report));
+      })} /> : <strong title={problem || (edit && kind === 'step' ? tip('rename', name + ' · double-click to rename') : title)} onDoubleClick={() => edit && kind === 'step' && choose({ ids: [id], field: 'name' })}>{title}</strong>}
+      {open && kind === 'step' && <button className="quiet nodrag" aria-label="Delete step" title={tip('delete', 'Delete step')} onClick={remove}><Icon name="delete" /></button>}{kind === 'step' && record && <span className="step-status"><span className={'state ' + record.state}>{record.state}</span><Duration record={record} /></span>}</header>
     <div className="step-body">
     {kind === 'step' ? <>
       <div className="node-name"><span title={nodeName(step.use)}>{nodeName(step.use)}</span><span className="after-source" title={edit ? 'Connect to after' : undefined}>{source([name])}</span>
@@ -274,7 +294,7 @@ function Step({ id, data, width, height }) {
       </div>)}</div>
     </> : <div className={kind === 'outputs' ? 'outputs' : undefined}>{Object.entries(ports).map(([key, port]) => <div className={'port ' + (kind === 'inputs' ? 'output' : '')} key={key} title={kind === 'inputs' && record?.source?.inputs[key] ? 'Copied from =' + record.source.inputs[key].join('.') : undefined} data-type={kind === 'outputs' ? workflowDescription(report)?.outputs?.[key]?.kind : undefined} onClickCapture={click(kind === 'inputs' ? ['inputs', key, 'default'] : ['outputs', key])}>
       {open ? <>
-        <div className="row"><Named name={key} names={Object.keys(workflow[kind])} onChange={fresh && (next => { if (next !== key && choose({ ids: [id] })) edit(current => rename(current, kind, key, next, report)); })} />
+        <div className="row"><Named name={key} names={Object.keys(workflow[kind])} onChange={fresh && (next => { if (next !== key && choose({ ids: [id] })) edit(current => rename(current, kind, { [key]: next }, report)); })} />
           <button className="nodrag" aria-label="Delete" title="Delete" onClick={() => edit(current => set(current, [kind, key], undefined))}><Icon name="delete" /></button></div>
         {kind === 'inputs' && <label>Type<Named label="Input type" name={type(port)} onChange={next => edit(current => set(current, ['inputs', key], declaration => typeof declaration === 'object' ? { ...declaration, type: next } : next))} /></label>}
       </> : <span>{key}</span>}
@@ -288,32 +308,45 @@ function Step({ id, data, width, height }) {
 }
 const nodeTypes = { step: Step };
 const cardStyle = Object.fromEntries(Object.entries(cardGeometry).map(([name, value]) => ['--card-' + name, value + 'px']));
-const fitOptions = { padding: 0.02 };
-const minZoom = 0.15;
+const minZoom = 0.15, maxZoom = 1.5;
+const fitted = (nodes, width, height) => getViewportForBounds(getNodesBounds(nodes), width, height, minZoom, 1, 0.02);
 
 function Fit({ ready, nodes, width, height }) {
-  const fitted = useRef(false);
+  const done = useRef(false);
   const { setViewport } = useReactFlow();
   useEffect(() => {
-    if (!fitted.current && ready && width && height) {
-      fitted.current = true;
-      setViewport(getViewportForBounds(getNodesBounds(nodes), width, height, minZoom, 1, fitOptions.padding));
+    if (!done.current && ready && width && height) {
+      done.current = true;
+      setViewport(fitted(nodes, width, height));
     }
   }, [ready, nodes, width, height, setViewport]);
   return null;
 }
 
+const room = (overflow, start, size, end, delta) => delta && /auto|scroll/.test(overflow) && (delta < 0 ? start > 0 : start + size < end);
+const scrolls = (element, boundary, dx, dy) => {
+  for (; element !== boundary; element = element.parentElement) {
+    const { overflowX, overflowY } = getComputedStyle(element);
+    if (room(overflowY, element.scrollTop, element.clientHeight, element.scrollHeight, dy) || room(overflowX, element.scrollLeft, element.clientWidth, element.scrollWidth, dx)) return true;
+  }
+};
+
 function Named({ name, onChange, names = [], label = 'Name' }) {
-  const [draft, change] = useState(name);
+  const [draft, change] = useState(name), cancelled = useRef(false);
   useEffect(() => change(name), [name]);
   return <input className="nodrag" aria-label={label} value={draft} data-draft={draft !== name} disabled={!onChange}
     onChange={event => { event.target.setCustomValidity(''); change(event.target.value); }}
     onBlur={event => {
-      if (draft !== name && names.includes(draft)) {
+      const next = cancelled.current ? name : draft;
+      cancelled.current = false; change(next);
+      if (next !== name && names.includes(next)) {
         event.target.setCustomValidity('This name is already used.'); event.target.reportValidity();
-      } else onChange?.(draft);
+      } else onChange?.(next);
     }}
-    onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); }} />;
+    onKeyDown={event => {
+      if (event.key === 'Enter') event.currentTarget.blur();
+      if (event.key === 'Escape') { event.preventDefault(); cancelled.current = true; event.currentTarget.setCustomValidity(''); event.currentTarget.blur(); }
+    }} />;
 }
 
 export function Canvas(props) {
@@ -325,7 +358,7 @@ function CanvasView({ workflow, catalog, onEdit, record, onFrom, onCall, onOpen,
   const selecting = useStore(state => state.userSelectionActive);
   const selectedId = !selecting && selected.ids.length === 1 ? selected.ids[0] : undefined;
   const [fitRequest, requestFit] = useState(0);
-  const [notice, propose] = useProposal(workflow, onEdit, scope);
+  const [notice, propose, tell] = useProposal(workflow, onEdit, scope);
   const canvas = useRef(null), frame = useRef(null), drag = useRef({}), latest = useRef({ workflow, onEdit });
   latest.current = { workflow, onEdit };
   const flow = useReactFlow();
@@ -375,17 +408,62 @@ function CanvasView({ workflow, catalog, onEdit, record, onFrom, onCall, onOpen,
   const child = records[name];
   const boundary = selection.length === 1 ? selection[0] : '';
   const remove = () => { onEdit(current => selected.ids.map(parseHandle).filter(path => path.length > 1).reduce((next, path) => set(next, path, undefined), current)); select({ ids: [] }); };
+  const grouping = !!onEdit && names.length > 1 && fresh && !notice?.checking;
+  const pointer = useRef(null), active = useSyncExternalStore(watch, owner) === (canvas.current?.closest('dialog') ?? null), panning = useKeyPress(active ? 'Space' : null);
+  useShortcuts({
+    close: () => { if (pendingSource) onConnected(); else if (selected.ids.length) choose({}); else return false; },
+    delete: () => { if (onEdit && (names.length || derived.edges.some(edge => edge.id === selectedId))) remove(); else return false; },
+    all: () => choose({ ids: Object.keys(workflow.steps || {}).map(id => handle(['steps', id])) }),
+    rename: () => { if (onEdit && name) choose({ ids: [selectedId], field: 'name' }); else return false; },
+    group: () => { if (grouping) makeNode(); else return false; },
+    find: () => canvas.current.querySelector('[aria-label="Find a node"]')?.focus(),
+    zoomIn: () => flow.zoomIn(), zoomOut: () => flow.zoomOut(),
+    fit: () => requestFit(value => value + 1),
+    fitSelected: () => { const picked = derived.nodes.filter(node => selected.ids.includes(node.id)); if (picked.length) flow.setViewport(fitted(picked, width, height)); else return false; },
+  }, () => active);
   useEffect(() => {
-    const key = event => {
-      if (event.defaultPrevented || event.target.closest('dialog') !== canvas.current.closest('dialog')) return;
-      if (event.key === 'Escape' && pendingSource) { onConnected(); event.preventDefault(); return; }
-      if (event.key === 'Escape' && selected.ids.length) { choose({}); event.preventDefault(); }
-      if (onEdit && !event.target.closest('input, textarea, select, [contenteditable]') && ['Delete', 'Backspace'].includes(event.key)
-        && (names.length || derived.edges.some(edge => edge.id === selectedId))) { event.preventDefault(); remove(); }
+    const view = canvas.current.querySelector('.drawing');
+    const wheel = event => {
+      event.stopPropagation();
+      const zooming = event.ctrlKey || event.metaKey, dx = event.deltaX || (event.shiftKey ? event.deltaY : 0), dy = event.shiftKey ? 0 : event.deltaY;
+      if (!zooming && scrolls(event.target, view, dx, dy)) return;
+      event.preventDefault();
+      const { x, y, zoom } = flow.getViewport(), box = view.getBoundingClientRect();
+      if (!zooming) { flow.setViewport({ x: x - dx, y: y - dy, zoom }); return; }
+      const next = Math.min(maxZoom, Math.max(minZoom, zoom * Math.exp(-event.deltaY / 200))), at = { x: event.clientX - box.left, y: event.clientY - box.top };
+      flow.setViewport({ x: at.x - (at.x - x) * next / zoom, y: at.y - (at.y - y) * next / zoom, zoom: next });
     };
-    window.addEventListener('keydown', key);
-    return () => window.removeEventListener('keydown', key);
+    view.addEventListener('wheel', wheel, { capture: true, passive: false });
+    return () => view.removeEventListener('wheel', wheel, { capture: true });
+  }, [flow]);
+  useEffect(() => {
+    const clip = event => {
+      if (!active || event.target.closest('input, textarea, select, [contenteditable]')) return;
+      if (event.type === 'paste') {
+        let clip;
+        try { clip = onEdit && clipboard(event.clipboardData.getData('text/plain')); } catch (error) { tell(error.message); event.preventDefault(); return; }
+        if (!clip) return;
+        pasteSteps(clip, pointer.current && flow.screenToFlowPosition(pointer.current));
+      } else {
+        if (!names.length || !fresh || event.type === 'cut' && !onEdit) return;
+        event.clipboardData.setData('text/plain', copy(workflow, names, report, Object.fromEntries(derived.nodes.map(node => [node.id, node.position]))));
+        if (event.type === 'cut') remove();
+      }
+      event.preventDefault();
+    };
+    for (const type of ['copy', 'cut', 'paste']) document.addEventListener(type, clip);
+    return () => { for (const type of ['copy', 'cut', 'paste']) document.removeEventListener(type, clip); };
   });
+  const pasting = useRef(0);
+  useEffect(() => () => { pasting.current++; }, []);
+  const pasteSteps = async (clip, at) => {
+    const lifetime = pasting.current;
+    let checked;
+    try { for await (checked of call(op.check, JSON.parse(content(clip)))) {} } catch (error) { tell(error.message); return; }
+    if (lifetime !== pasting.current) return;
+    const result = paste(latest.current.workflow, clip, checked, at);
+    if (choose({ ids: result.names.map(id => handle(['steps', id])) })) latest.current.onEdit(current => paste(current, clip, checked, at).workflow);
+  };
   const addStep = (use, position) => {
     const next = add(workflow, use, position);
     const name = Object.keys(next.steps).find(name => !workflow.steps?.[name]);
@@ -410,10 +488,10 @@ function CanvasView({ workflow, catalog, onEdit, record, onFrom, onCall, onOpen,
     {notice && !notice.path && <p className="notice problem" role="alert">{notice.message}</p>}
     {pendingSource && <div className="notice use-value">Use <code>={pendingSource.join('.')}</code> · Choose an input to connect.<button onClick={onConnected}>Cancel (Escape)</button></div>}
     <div className="canvas">
-      <div className="drawing" onDragOver={event => { if (onEdit && event.dataTransfer.types.includes(nodeMime)) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; } }}
+      <div className="drawing" onPointerMove={event => { pointer.current = { x: event.clientX, y: event.clientY }; }} onPointerLeave={() => { pointer.current = null; }} onDragOver={event => { if (onEdit && event.dataTransfer.types.includes(nodeMime)) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; } }}
         onDrop={event => { const name = event.dataTransfer.getData(nodeMime); if (onEdit && name) { event.preventDefault(); addStep(name, flow.screenToFlowPosition({ x: event.clientX, y: event.clientY })); } }}>
-        <ReactFlow id={id} nodes={nodes} edges={derived.edges.map(edge => ({ ...edge, selected: edge.id === selectedId }))} nodeTypes={nodeTypes} minZoom={minZoom} maxZoom={1.5}
-          nodesDraggable={!!onEdit && !notice?.checking} nodesConnectable={!!onEdit} deleteKeyCode={null} connectOnClick multiSelectionKeyCode="Shift" selectionKeyCode="Shift"
+        <ReactFlow id={id} nodes={nodes} edges={derived.edges.map(edge => ({ ...edge, selected: edge.id === selectedId }))} nodeTypes={nodeTypes} minZoom={minZoom} maxZoom={maxZoom} className={panning ? 'panning' : undefined} zoomOnDoubleClick={false} selectNodesOnDrag={false} ariaLabelConfig={{ 'controls.zoomIn.ariaLabel': tip('zoomIn', 'Zoom In'), 'controls.zoomOut.ariaLabel': tip('zoomOut', 'Zoom Out') }}
+          nodesDraggable={!!onEdit && !notice?.checking && !panning} nodesConnectable={!!onEdit} deleteKeyCode={null} connectOnClick multiSelectionKeyCode={active ? 'Shift' : null} selectionKeyCode={active ? 'Shift' : null} panActivationKeyCode={active ? 'Space' : null} disableKeyboardA11y={!active}
           onNodeDragStart={() => { drag.current = {}; }} onSelectionDragStart={() => { drag.current = {}; }}
           onNodeClick={(event, node) => { if (!event.shiftKey && node.id !== selectedId && !event.target.closest('.react-flow__handle')) choose({ ids: [node.id] }); }} onPaneClick={() => choose({})}
           onNodesChange={changes => {
@@ -428,16 +506,16 @@ function CanvasView({ workflow, catalog, onEdit, record, onFrom, onCall, onOpen,
           onEdgeClick={(_, edge) => { if (onEdit) choose({ ids: [edge.id] }); }}>
           <Fit key={fitRequest + ':' + !!Object.keys(workflow.steps || {}).length} ready={fitRequest > 0 || fresh || !!error} nodes={derived.nodes} width={width} height={height} /><Background gap={22} size={1} />
           <Controls orientation="horizontal" showInteractive={false} showFitView={false}>
-            <ControlButton className="react-flow__controls-fitview layout" title="Fit View" aria-label="Fit View" onClick={() => requestFit(value => value + 1)}>Fit</ControlButton>
+            <ControlButton className="react-flow__controls-fitview layout" title={tip('fit', 'Fit View')} aria-label="Fit View" onClick={() => requestFit(value => value + 1)}>Fit</ControlButton>
             {onEdit && <ControlButton className="layout" title="Tidy layout" disabled={!Object.keys(workflow.view?.positions || {}).length} onClick={() => { if (!choose({})) return; onEdit(current => set(current, ['view', 'positions'], undefined)); requestFit(value => value + 1); }}>Tidy</ControlButton>}
-            {onEdit && names.length > 1 && <ControlButton className="layout" disabled={!fresh || notice?.checking} onClick={makeNode}>Make a node</ControlButton>}
-            {onEdit && derived.edges.some(edge => edge.id === selectedId) && <ControlButton aria-label="Delete connection" title="Delete connection (Delete / Backspace)" onClick={remove}><Icon name="delete" /></ControlButton>}
+            {onEdit && names.length > 1 && <ControlButton className="layout" title={tip('group')} disabled={!grouping} onClick={makeNode}>Make a node</ControlButton>}
+            {onEdit && derived.edges.some(edge => edge.id === selectedId) && <ControlButton aria-label="Delete connection" title={tip('delete', 'Delete connection')} onClick={remove}><Icon name="delete" /></ControlButton>}
           </Controls>
         </ReactFlow>
         {onEdit && !Object.keys(workflow.steps || {}).length && <div className="empty-canvas">Click a node on the left or drag it onto the canvas to add a step.</div>}
       </div>
-      {record && selectedId && (step || boundary) && <aside className="inspector nowheel">
-        <button className="quiet close" title="Close (Escape)" onClick={() => select({ ids: [] })}><Icon name="close" />Close</button>
+      {record && selectedId && (step || boundary) && <aside className="inspector">
+        <button className="quiet close" title={tip('close', 'Close')} onClick={() => select({ ids: [] })}><Icon name="close" />Close</button>
         {step ? <>
           <h3>{name}</h3><p className="inspector-node">{nodeName(step.use)}</p>
           {onFrom && <button onClick={() => onFrom(name)}>Run from here</button>}

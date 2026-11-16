@@ -89,24 +89,28 @@ export function inputs(use: Definition, values: Values | undefined, catalog: Des
   return { ...Object.fromEntries(Object.keys(values || {}).map(name => [name, 'any'])), ...describe(use, catalog).inputs };
 }
 
-export function rename(workflow: Workflow, collection: 'steps' | 'inputs' | 'outputs', old: string, name: string, report: Report): Workflow {
-  const value = workflow[collection]?.[old];
-  let next = set(set(workflow, [collection, old], undefined), [collection, name], value);
+export function rename(workflow: Workflow, collection: 'steps' | 'inputs' | 'outputs', renames: Record<string, string>, report: Report): Workflow {
+  const pairs = Object.entries(renames), to = (name: string) => Object.hasOwn(renames, name) ? renames[name] : name;
+  const at = (path: Path) => path.reduce((value: any, key) => value?.[key], workflow);
+  let next = workflow;
+  const relocate = (where: (name: string) => Path) => {
+    const present = pairs.filter(([old]) => at(where(old)) !== undefined);
+    for (const [old] of present) next = set(next, where(old), undefined);
+    for (const [old, name] of present) next = set(next, where(name), at(where(old)));
+  };
+  relocate(name => [collection, name]);
   if (collection === 'outputs') return next;
   for (const ref of report.references) {
     const from = [...ref.from];
     const i = collection === 'inputs' && from[0] === 'inputs' ? 1 : collection === 'steps' && from[0] !== 'inputs' ? 0 : -1;
-    if (i < 0 || from[i] !== old) continue;
-    const path = collection === 'steps' && ref.path[0] === 'steps' && ref.path[1] === old ? [ref.path[0], name, ...ref.path.slice(2)] : ref.path;
-    from[i] = name;
+    if (i < 0 || !Object.hasOwn(renames, from[i])) continue;
+    const path = collection === 'steps' && ref.path[0] === 'steps' ? [ref.path[0], to(String(ref.path[1])), ...ref.path.slice(2)] : ref.path;
+    from[i] = to(from[i]);
     next = set(next, path, '=' + from.join('.'));
   }
-  if (collection === 'steps') for (const [id, step] of Object.entries(next.steps || {}) as [string, Step][]) {
-    if (step.after) next = set(next, ['steps', id, 'after'], step.after.map(item => item === old ? name : item));
-  }
-  if (collection === 'steps' && next.view?.positions?.[handle(['steps', old])]) {
-    next = set(next, ['view', 'positions', handle(['steps', name])], next.view.positions[handle(['steps', old])]);
-    next = set(next, ['view', 'positions', handle(['steps', old])], undefined);
+  if (collection === 'steps') {
+    for (const [id, step] of Object.entries(next.steps || {}) as [string, Step][]) if (step.after) next = set(next, ['steps', id, 'after'], step.after.map(to));
+    relocate(name => ['view', 'positions', handle(['steps', name])]);
   }
   return next;
 }
@@ -179,6 +183,40 @@ export function group(workflow: Workflow, names: string[], report: Report): { wo
     y: (top + Math.max(...nodes.map(node => node.position.y + node.measured.height)) - size.height) / 2,
   });
   return { workflow: next, name };
+}
+
+export function copy(workflow: Workflow, names: string[], report: Report, positions: Record<string, { x: number; y: number }>): string {
+  let inner: Workflow = { steps: Object.fromEntries(names.map(id => [id, workflow.steps![id]])) };
+  for (const ref of [...report.references].reverse()) {
+    if (ref.path[0] === 'steps' && names.includes(String(ref.path[1])) && !names.includes(ref.from[0])) inner = set(inner, ref.path, undefined);
+  }
+  for (const id of names) if (inner.steps![id].after) inner = set(inner, ['steps', id, 'after'], inner.steps![id].after!.filter(other => names.includes(other)));
+  return JSON.stringify({ ...inner, view: { positions: Object.fromEntries(names.map(id => [handle(['steps', id]), positions[handle(['steps', id])]])) } });
+}
+
+export function clipboard(text: string): Workflow | undefined {
+  let clip: any;
+  try { clip = JSON.parse(text); } catch { return; }
+  const steps = clip?.steps;
+  if (!steps || typeof steps !== 'object' || Array.isArray(steps) || !Object.keys(steps).length) return;
+  if (Object.values(steps).some((step: any) => !step || typeof step !== 'object' || step.use == null)) throw new Error('Pasted steps need to be objects with a use.');
+  const positions = Object.entries(clip.view?.positions || {}).filter(([, spot]: any) => Number.isFinite(spot?.x) && Number.isFinite(spot?.y));
+  return { steps, view: { positions: Object.fromEntries(positions) } };
+}
+
+export function paste(workflow: Workflow, clip: Workflow, report: Report, at?: { x: number; y: number }): { workflow: Workflow; names: string[] } {
+  const taken: Values = Object.assign(Object.create(null), workflow.steps), renames: Record<string, string> = Object.create(null);
+  for (const id of Object.keys(clip.steps!)) { renames[id] = unique(taken, id); taken[renames[id]] = true; }
+  const spots = Object.fromEntries(graph(clip, [], undefined, report).nodes.map(node => [node.id, node.position]));
+  const spot = (id: string) => spots[handle(['steps', id])];
+  const left = Math.min(...Object.keys(renames).map(id => spot(id).x)), top = Math.min(...Object.keys(renames).map(id => spot(id).y));
+  const to = at ?? { x: left + cardGeometry.gap, y: top + cardGeometry.gap };
+  const renamed = rename({ ...clip, view: undefined }, 'steps', renames, report).steps!;
+  let next = workflow;
+  for (const [old, id] of Object.entries(renames)) {
+    next = set(set(next, ['steps', id], renamed[id]), ['view', 'positions', handle(['steps', id])], { x: spot(old).x - left + to.x, y: spot(old).y - top + to.y });
+  }
+  return { workflow: next, names: Object.values(renames) };
 }
 
 export function move(values: any[], from: number, to: number): any[] {
@@ -319,3 +357,32 @@ export function graph(workflow: Workflow, catalog: Description[], record?: Run, 
 export function runWorkflow(run: Run, catalog: Description[]): Workflow {
   return run.workflow || { steps: { node: { use: run.node } }, outputs: Object.fromEntries(Object.keys({ ...describe(run.node, catalog).outputs, ...run.outputs }).map(name => [name, '=node.' + name])) };
 }
+
+const shortcutTable: Record<string, [string, string, string][]> = {
+  'Move around': [
+    ['pan', 'Space drag / Middle drag', 'Pan'], ['scroll', 'scroll / Shift scroll', 'Pan, or pan sideways'], ['pinch', 'Mod scroll / pinch', 'Zoom'],
+    ['zoomIn', '+ / =', 'Zoom in'], ['zoomOut', '-', 'Zoom out'], ['fit', 'Shift Digit1', 'Fit the whole workflow'], ['fitSelected', 'Shift Digit2', 'Fit the selected steps'],
+  ],
+  'Select and edit': [
+    ['all', 'Mod A', 'Select all steps'], ['close', 'Escape', 'Close the open step or clear the selection'], ['delete', 'Delete / Backspace', 'Delete the selected steps or connection'],
+    ['rename', 'F2', 'Rename the selected step'], ['copy', 'Mod C', 'Copy the selected steps'], ['cut', 'Mod X', 'Cut the selected steps'], ['paste', 'Mod V', 'Paste steps'],
+    ['group', 'Mod G', 'Make a node'], ['undo', 'Mod Z', 'Undo'], ['redo', 'Mod Shift Z / Mod Y', 'Redo'],
+  ],
+  'Find and run': [['find', '/', 'Find a node'], ['save', 'Mod S', 'Save'], ['run', 'Mod Enter', 'Run'], ['help', '?', 'Show the shortcuts']],
+};
+export const shortcuts = Object.entries(shortcutTable).flatMap(([group, rows]) => rows.map(([id, keys, label]) => ({ id, group, label, keys: keys.split(' / ') })));
+export const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
+const typing = ['close', 'save', 'run'];
+type KeyEvent = Pick<KeyboardEvent, 'key' | 'code' | 'ctrlKey' | 'metaKey' | 'shiftKey' | 'altKey'>;
+
+export function shortcut(event: KeyEvent, typed = false, mac = isMac): string | undefined {
+  const [modifier, other] = mac ? [event.metaKey, event.ctrlKey] : [event.ctrlKey, event.metaKey];
+  return shortcuts.find(row => (!typed || typing.includes(row.id)) && row.keys.some(keys => {
+    const parts = keys.split(' '), main = parts.pop()!;
+    return modifier === parts.includes('Mod') && !other && !event.altKey && (/^\W$/.test(main) || event.shiftKey === parts.includes('Shift'))
+      && (main.startsWith('Digit') ? event.code === main : event.key.toLowerCase() === main.toLowerCase());
+  }))?.id;
+}
+
+export const keysText = (row: { keys: string[] }, mac = isMac): string => row.keys.map(keys => keys.split(' ').map(part => part === 'Mod' ? mac ? '⌘' : 'Ctrl' : part.replace('Digit', '')).join('+')).join(' / ');
+export const tip = (id: string, label?: string, mac = isMac): string => { const row = shortcuts.find(row => row.id === id)!; return (label ?? row.label) + ' (' + keysText(row, mac) + ')'; };
