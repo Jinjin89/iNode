@@ -72,7 +72,7 @@ export function useShortcuts(handlers, own = () => true) {
 
 export function Dialog({ label, onClose, className, closedby, children }) {
   const ref = useRef(null);
-  useEffect(() => { const dialog = ref.current; dialog.showModal(); watchers.forEach(watcher => watcher()); return () => { dialog.close(); watchers.forEach(watcher => watcher()); }; }, []);
+  useEffect(() => { const dialog = ref.current, from = document.activeElement; dialog.showModal(); watchers.forEach(watcher => watcher()); return () => { dialog.close(); watchers.forEach(watcher => watcher()); if (from?.isConnected) from.focus(); }; }, []);
   return createPortal(<dialog ref={ref} className={className} aria-label={label} closedby={closedby} onClick={event => event.stopPropagation()} onDragOver={event => event.stopPropagation()} onDrop={event => event.stopPropagation()} onCancel={event => { event.preventDefault(); onClose(); }}>{children}</dialog>, document.body);
 }
 
