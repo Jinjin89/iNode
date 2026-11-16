@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import { Background, ControlButton, Controls, Handle, Position, ReactFlow, ReactFlowProvider, applyNodeChanges, getNodesBounds, getViewportForBounds, useKeyPress, useStore, useReactFlow, useUpdateNodeInternals } from '@xyflow/react';
-import { add, content, graph, group, handle, parseHandle, problems, rename, set, type, kind, box, inputs as nodeInputs, reference, connect, emptyReport, emptyValue, expose, move, groups, connectionProblem, unique, workflowDescription, nodeName, reveal, cardGeometry, fileInput, fileLabel, fileValue, copy, paste, clipboard, shortcut, tip } from './model';
+import { add, content, graph, group, handle, parseHandle, problems, rename, set, type, kind, box, inputs as nodeInputs, reference, connect, emptyReport, emptyValue, expose, move, groups, connectionProblem, unique, workflowDescription, nodeName, reveal, cardGeometry, fileInput, fileLabel, fileValue, copy, paste, clipboard, shortcut, tip, created, extend, place } from './model';
 import { call, op } from './client';
 import { Duration, Value } from './Value';
 import { Icon } from './Icon';
@@ -27,21 +27,31 @@ export function useProposal(workflow, onEdit, scope = '(inline)') {
   latest.current = { workflow, onEdit };
   useEffect(() => () => { connecting.current++; }, []);
   useEffect(() => { if (notice && !notice.checking) { const timer = setTimeout(() => setNotice(null), 6000); return () => clearTimeout(timer); } }, [notice]);
-  const propose = async build => {
-    const attempt = ++connecting.current, before = latest.current.workflow, next = build(before);
-    const show = (message, checking = false) => setNotice({ path: next.path && handle(next.socket || next.path), message, checking });
-    show('Checking change…', true);
-    try {
-      for await (const report of call(op.check, JSON.parse(content(next.workflow)))) {
-        if (attempt !== connecting.current) return;
-        if (content(before) !== content(latest.current.workflow)) { show('The workflow changed; try again.'); return; }
-        const problem = connectionProblem(report, next.path, scope);
-        if (problem) show(problem.message);
-        else { setNotice(null); latest.current.onEdit(current => ({ ...next.workflow, view: next.workflow.view === before.view ? current.view : next.workflow.view })); return true; }
-      }
-    } catch (error) { show(error.message); }
+  const propose = async (build, rescue) => {
+    const attempt = ++connecting.current, before = latest.current.workflow, tries = [].concat(build(before));
+    const edit = next => latest.current.onEdit(current => ({ ...next, view: next.view === before.view ? current.view : next.view }));
+    let next, reason;
+    const show = (message, checking = false) => setNotice({ path: !rescue && next.path && handle(next.socket || next.path), message, checking });
+    const stale = () => {
+      if (attempt !== connecting.current) return true;
+      if (content(before) === content(latest.current.workflow)) return false;
+      show('The workflow changed; try again.'); return true;
+    };
+    for (next of tries) {
+      show('Checking change…', true);
+      try {
+        for await (const report of call(op.check, JSON.parse(content(next.workflow)))) {
+          if (stale()) return;
+          const problem = connectionProblem(report, next.path, scope);
+          if (problem) { reason ??= problem.message; show(problem.message); }
+          else { setNotice(null); edit(next.workflow); return true; }
+        }
+      } catch (error) { if (attempt === connecting.current) show(error.message); return; }
+      if (stale()) return;
+    }
+    if (rescue) { const { workflow, message } = rescue(reason, tries[0]); edit(workflow); setNotice({ message }); return false; }
   };
-  return [notice, propose, message => setNotice({ message })];
+  return [notice, propose, message => setNotice({ message }), () => { connecting.current++; setNotice(null); }];
 }
 
 const watchers = new Set(), watch = watcher => { watchers.add(watcher); return () => watchers.delete(watcher); };
@@ -88,7 +98,7 @@ export function NodeList({ catalog, onAdd, onOpen, opening }) {
   useReply(detail && op.show, [detail?.name], setDescribed, setError);
   const info = described?.name === detail?.name ? described : detail;
   return <aside className="catalog" onMouseLeave={() => showDetail(null)} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) showDetail(null); }}>
-    <h2>Nodes</h2><input aria-label="Find a node" placeholder={tip('find', 'Find a node…')} value={search} onChange={event => setSearch(event.target.value)}
+    <h2>Nodes</h2><input aria-label="Find a node" placeholder="Find a node…" value={search} onChange={event => setSearch(event.target.value)}
       onKeyDown={event => {
         const first = groups(catalog, search)[0]?.[1][0];
         if (event.key === 'Enter' && first && onAdd && !event.nativeEvent.isComposing && !(event.ctrlKey || event.metaKey || event.shiftKey || event.altKey)) { event.preventDefault(); onAdd(first.name); }
@@ -256,13 +266,14 @@ function Step({ id, data, width, height }) {
   const at = input => edit ? problems(report, where, input) : [];
   const message = path => notice?.path === handle(path) && <span className="socket-message" role="alert">{notice.message}</span>;
   const target = (path, port, flat = true) => <>
+    <Handle type="target" position={Position.Left} data-type={port?.kind} id={handle(path)} title={edit ? 'Connect an output here, or drop a line on empty canvas to add a step' : undefined} isConnectable={!!edit && !notice?.checking}
+      onClickCapture={event => { if (pendingSource) { event.stopPropagation(); wire(pendingSource, path); } }} />
+    {/* After the visible socket: at equal distance the nearest-handle search takes the first one in document order. */}
     {flat && report.references.filter(ref => ref.path.length > path.length && path.every((part, i) => ref.path[i] === part)).map(ref =>
       <Handle key={handle(ref.path)} type="target" position={Position.Left} id={handle(ref.path)} isConnectable={false} style={{ visibility: 'hidden' }} />)}
-    <Handle type="target" position={Position.Left} data-type={port?.kind} id={handle(path)} title={edit ? 'Connect an output here' : undefined} isConnectable={!!edit && !notice?.checking}
-      onClickCapture={event => { if (pendingSource) { event.stopPropagation(); wire(pendingSource, path); } }} />
     {message(path)}
   </>;
-  const source = (path, port) => <><Handle type="source" position={Position.Right} data-type={port?.kind} id={handle(path)} title={edit ? 'Connect this output to an input' : undefined} isConnectable={!!edit && !notice?.checking && !pendingSource} />{message(path)}</>;
+  const source = (path, port) => <><Handle type="source" position={Position.Right} data-type={port?.kind} id={handle(path)} title={edit ? 'Connect this output to an input, or drop a line on empty canvas to add a step' : undefined} isConnectable={!!edit && !notice?.checking && !pendingSource} />{message(path)}</>;
   const field = (port, value, path, children) => <div className="field-slot" data-port={handle(path)}><Field label={kind === 'step' ? path[3] : 'Value'} closed={!open} references={!record} port={port} value={value} onChange={edit && ((next, group) => edit(current => set(current, path, next), group))} catalog={catalog} path={path} socket={target} descriptions={report.nodes} onOpen={onOpen} onSave={onSave} propose={propose} trail={trail}
     issues={at(path.slice(kind === 'step' ? 3 : 0).join('.'))} children={children} /></div>;
   const click = path => event => { if (edit && !open && !event.shiftKey && !event.target.closest('.react-flow__handle')) { event.stopPropagation(); choose({ ids: [id], field: path }); } };
@@ -349,6 +360,30 @@ function Named({ name, onChange, names = [], label = 'Name' }) {
     }} />;
 }
 
+function QuickAdd({ at, catalog, busy, active, onChoose, onClose }) {
+  const [search, setSearch] = useState(''), [index, setIndex] = useState(0), panel = useRef(null), id = useId();
+  const view = useStore(state => state.transform), width = useStore(state => state.width), height = useStore(state => state.height);
+  const nodes = groups(catalog, search).flatMap(([, nodes]) => nodes), current = Math.min(index, nodes.length - 1);
+  useEffect(() => { document.getElementById(id + current)?.scrollIntoView({ block: 'nearest' }); }, [id, current, search, catalog]);
+  useEffect(() => {
+    const down = event => { if (active && !panel.current.contains(event.target)) onClose(); };
+    const key = event => { if (active && event.key === 'Escape' && !event.isComposing) { event.preventDefault(); onClose(); } };
+    document.addEventListener('pointerdown', down, true); document.addEventListener('keydown', key, true);
+    return () => { document.removeEventListener('pointerdown', down, true); document.removeEventListener('keydown', key, true); };
+  });
+  return <div className="quick" ref={panel} style={place(at, { x: view[0], y: view[1], zoom: view[2] }, width, height)} aria-busy={busy}>
+    <input autoFocus role="combobox" aria-label="Add a step" aria-expanded="true" aria-controls={id} aria-activedescendant={nodes.length ? id + current : undefined} placeholder="Find a node…" value={search}
+      onChange={event => { setSearch(event.target.value); setIndex(0); }}
+      onKeyDown={event => {
+        if (event.nativeEvent.isComposing) { event.stopPropagation(); return; }
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); setIndex((current + (event.key === 'ArrowDown' ? 1 : -1) + nodes.length) % (nodes.length || 1)); }
+        if (event.key === 'Enter' && nodes[current] && !busy && !(event.ctrlKey || event.metaKey || event.shiftKey || event.altKey)) { event.preventDefault(); onChoose(nodes[current].name); }
+      }} />
+    <div role="listbox" id={id}>{nodes.map((node, i) => <div role="option" id={id + i} key={node.name} aria-selected={i === current} onClick={() => !busy && onChoose(node.name)}>
+      <strong>{node.name}</strong><small>{node.doc}</small></div>)}</div>
+  </div>;
+}
+
 export function Canvas(props) {
   return <ReactFlowProvider><CanvasView {...props} /></ReactFlowProvider>;
 }
@@ -357,8 +392,8 @@ function CanvasView({ workflow, catalog, onEdit, record, onFrom, onCall, onOpen,
   const [selected, select] = useState({ ids: [] });
   const selecting = useStore(state => state.userSelectionActive);
   const selectedId = !selecting && selected.ids.length === 1 ? selected.ids[0] : undefined;
-  const [fitRequest, requestFit] = useState(0);
-  const [notice, propose, tell] = useProposal(workflow, onEdit, scope);
+  const [fitRequest, requestFit] = useState(0), [popup, setPopup] = useState(null);
+  const [notice, propose, tell, cancel] = useProposal(workflow, onEdit, scope);
   const canvas = useRef(null), frame = useRef(null), drag = useRef({}), latest = useRef({ workflow, onEdit });
   latest.current = { workflow, onEdit };
   const flow = useReactFlow();
@@ -377,6 +412,7 @@ function CanvasView({ workflow, catalog, onEdit, record, onFrom, onCall, onOpen,
   const sizes = useStore(state => Object.fromEntries([...state.nodeLookup].map(([id, node]) => [id, node.measured])),
     (a, b) => Object.keys(a).length === Object.keys(b).length && Object.keys(a).every(id => a[id]?.width === b[id]?.width && a[id]?.height === b[id]?.height));
   const height = useStore(state => state.height);
+  const radius = useStore(state => Math.round(24 / state.transform[2]));
   const derived = graph(workflow, catalog, record, report, scope, width);
   const ensureVisible = useCallback(element => {
     const shift = reveal(element.getBoundingClientRect(), canvas.current.querySelector('.drawing').getBoundingClientRect());
@@ -410,13 +446,29 @@ function CanvasView({ workflow, catalog, onEdit, record, onFrom, onCall, onOpen,
   const remove = () => { onEdit(current => selected.ids.map(parseHandle).filter(path => path.length > 1).reduce((next, path) => set(next, path, undefined), current)); select({ ids: [] }); };
   const grouping = !!onEdit && names.length > 1 && fresh && !notice?.checking;
   const pointer = useRef(null), active = useSyncExternalStore(watch, owner) === (canvas.current?.closest('dialog') ?? null), panning = useKeyPress(active ? 'Space' : null);
+  const open = (client, from) => {
+    const box = canvas.current.querySelector('.drawing').getBoundingClientRect();
+    cancel(); setPopup({ at: flow.screenToFlowPosition(client ?? { x: box.left + box.width / 2, y: box.top + box.height / 2 }), from });
+  };
+  const leave = () => { setPopup(null); canvas.current.querySelector('.react-flow').focus(); };
+  const exists = from => !!flow.getInternalNode(from.nodeId)?.internals.handleBounds?.[from.type]?.some(dot => dot.id === from.id);
+  const pick = async use => {
+    const { at, from } = popup;
+    if (from && !exists(from)) { leave(); return; }
+    if (!from) { if (addStep(use, at)) leave(); return; }
+    if (!choose({})) return;
+    let added;
+    const done = await propose(before => (added = extend(before, use, at, from, catalog)).tries, (reason, first) => ({
+      workflow: added.workflow, message: 'Added ' + use + ' unconnected' + (first ? '. ' + first.port + ': ' + reason : ': no matching ports.') }));
+    if (done !== undefined) { select({ ids: [handle(['steps', added.name])] }); leave(); }
+  };
   useShortcuts({
     close: () => { if (pendingSource) onConnected(); else if (selected.ids.length) choose({}); else return false; },
     delete: () => { if (onEdit && (names.length || derived.edges.some(edge => edge.id === selectedId))) remove(); else return false; },
     all: () => choose({ ids: Object.keys(workflow.steps || {}).map(id => handle(['steps', id])) }),
     rename: () => { if (onEdit && name) choose({ ids: [selectedId], field: 'name' }); else return false; },
     group: () => { if (grouping) makeNode(); else return false; },
-    find: () => canvas.current.querySelector('[aria-label="Find a node"]')?.focus(),
+    find: () => { if (onEdit) open(pointer.current); else return false; },
     zoomIn: () => flow.zoomIn(), zoomOut: () => flow.zoomOut(),
     fit: () => requestFit(value => value + 1),
     fitSelected: () => { const picked = derived.nodes.filter(node => selected.ids.includes(node.id)); if (picked.length) flow.setViewport(fitted(picked, width, height)); else return false; },
@@ -466,11 +518,12 @@ function CanvasView({ workflow, catalog, onEdit, record, onFrom, onCall, onOpen,
   };
   const addStep = (use, position) => {
     const next = add(workflow, use, position);
-    const name = Object.keys(next.steps).find(name => !workflow.steps?.[name]);
+    const name = created(workflow, next);
     if (!choose({ ids: [handle(['steps', name])] })) return;
     onEdit(current => add(current, use, position));
     const node = graph(next, catalog, record, report, scope, width).nodes.find(node => node.id === handle(['steps', name]));
     if (!position) flow.setCenter(node.position.x + node.measured.width / 2, node.position.y + node.measured.height / 2, { zoom: Math.min(flow.getZoom(), 1) });
+    return true;
   };
   const wire = (source, target) => propose(current => ({ workflow: connect(current, source, target), path: target })).then(accepted => { if (accepted) onConnected?.(); });
   const makeNode = () => {
@@ -490,7 +543,7 @@ function CanvasView({ workflow, catalog, onEdit, record, onFrom, onCall, onOpen,
     <div className="canvas">
       <div className="drawing" onPointerMove={event => { pointer.current = { x: event.clientX, y: event.clientY }; }} onPointerLeave={() => { pointer.current = null; }} onDragOver={event => { if (onEdit && event.dataTransfer.types.includes(nodeMime)) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; } }}
         onDrop={event => { const name = event.dataTransfer.getData(nodeMime); if (onEdit && name) { event.preventDefault(); addStep(name, flow.screenToFlowPosition({ x: event.clientX, y: event.clientY })); } }}>
-        <ReactFlow id={id} nodes={nodes} edges={derived.edges.map(edge => ({ ...edge, selected: edge.id === selectedId }))} nodeTypes={nodeTypes} minZoom={minZoom} maxZoom={maxZoom} className={panning ? 'panning' : undefined} zoomOnDoubleClick={false} selectNodesOnDrag={false} ariaLabelConfig={{ 'controls.zoomIn.ariaLabel': tip('zoomIn', 'Zoom In'), 'controls.zoomOut.ariaLabel': tip('zoomOut', 'Zoom Out') }}
+        <ReactFlow id={id} tabIndex={-1} nodes={nodes} edges={derived.edges.map(edge => ({ ...edge, selected: edge.id === selectedId }))} nodeTypes={nodeTypes} minZoom={minZoom} maxZoom={maxZoom} className={panning ? 'panning' : undefined} zoomOnDoubleClick={false} selectNodesOnDrag={false} ariaLabelConfig={{ 'controls.zoomIn.ariaLabel': tip('zoomIn', 'Zoom In'), 'controls.zoomOut.ariaLabel': tip('zoomOut', 'Zoom Out') }}
           nodesDraggable={!!onEdit && !notice?.checking && !panning} nodesConnectable={!!onEdit} deleteKeyCode={null} connectOnClick multiSelectionKeyCode={active ? 'Shift' : null} selectionKeyCode={active ? 'Shift' : null} panActivationKeyCode={active ? 'Space' : null} disableKeyboardA11y={!active}
           onNodeDragStart={() => { drag.current = {}; }} onSelectionDragStart={() => { drag.current = {}; }}
           onNodeClick={(event, node) => { if (!event.shiftKey && node.id !== selectedId && !event.target.closest('.react-flow__handle')) choose({ ids: [node.id] }); }} onPaneClick={() => choose({})}
@@ -502,7 +555,12 @@ function CanvasView({ workflow, catalog, onEdit, record, onFrom, onCall, onOpen,
               return next;
             }, drag.current);
           }}
-          onConnect={edge => wire(parseHandle(edge.sourceHandle), parseHandle(edge.targetHandle))}
+          onConnect={edge => wire(parseHandle(edge.sourceHandle), parseHandle(edge.targetHandle))} connectionRadius={radius}
+          onConnectEnd={(event, { fromHandle, toHandle }) => {
+            const { clientX: x, clientY: y } = event.changedTouches?.[0] ?? event, hit = document.elementFromPoint(x, y);
+            const from = { type: fromHandle.type, path: parseHandle(fromHandle.id), nodeId: fromHandle.nodeId, id: fromHandle.id };
+            if (onEdit && active && /^(pointer|mouse|touch)(up|end)$/.test(event.type) && !toHandle && hit?.matches('.react-flow__pane') && canvas.current.contains(hit) && exists(from)) open({ x, y }, from);
+          }}
           onEdgeClick={(_, edge) => { if (onEdit) choose({ ids: [edge.id] }); }}>
           <Fit key={fitRequest + ':' + !!Object.keys(workflow.steps || {}).length} ready={fitRequest > 0 || fresh || !!error} nodes={derived.nodes} width={width} height={height} /><Background gap={22} size={1} />
           <Controls orientation="horizontal" showInteractive={false} showFitView={false}>
@@ -512,8 +570,9 @@ function CanvasView({ workflow, catalog, onEdit, record, onFrom, onCall, onOpen,
             {onEdit && derived.edges.some(edge => edge.id === selectedId) && <ControlButton aria-label="Delete connection" title={tip('delete', 'Delete connection')} onClick={remove}><Icon name="delete" /></ControlButton>}
           </Controls>
         </ReactFlow>
-        {onEdit && !Object.keys(workflow.steps || {}).length && <div className="empty-canvas">Click a node on the left or drag it onto the canvas to add a step.</div>}
+        {onEdit && !Object.keys(workflow.steps || {}).length && <div className="empty-canvas">Click a node on the left or drag it onto the canvas to add a step, or press /.</div>}
       </div>
+      {onEdit && popup && <QuickAdd at={popup.at} catalog={catalog} busy={!!notice?.checking} active={active} onChoose={pick} onClose={() => { cancel(); leave(); }} />}
       {record && selectedId && (step || boundary) && <aside className="inspector">
         <button className="quiet close" title={tip('close', 'Close')} onClick={() => select({ ids: [] })}><Icon name="close" />Close</button>
         {step ? <>

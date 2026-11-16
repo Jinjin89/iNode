@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { add, box, canReference, connect, connectionProblem, content, copyText, commandText, duration, emptyReport, emptyValue, expose, copy, paste, clipboard, shortcut, shortcuts, keysText, tip, filterRuns, graph, group, groups, handle, history, inputValues, kind, move, parseHandle, layout, reference, rename, runMessages, runTrail, runWorkflow, reveal, set, textPreview, type, workflowDescription, fileInput, fileLabel, fileValue, type Workflow, type Description, type Reference, type History, type Run } from './model';
+import { add, box, candidates, extend, place, quick, canReference, connect, connectionProblem, content, copyText, commandText, duration, emptyReport, emptyValue, expose, copy, paste, clipboard, shortcut, shortcuts, keysText, tip, filterRuns, graph, group, groups, handle, history, inputValues, kind, move, parseHandle, layout, reference, rename, runMessages, runTrail, runWorkflow, reveal, set, textPreview, type, workflowDescription, fileInput, fileLabel, fileValue, type Workflow, type Description, type Reference, type History, type Run } from './model';
 
 it('shows literal program arguments as a command with safe quoting', () => {
   expect(commandText(['python3', 'counter.py'])).toBe('python3 counter.py');
@@ -476,6 +476,52 @@ describe('layout', () => {
     expect(positions[input]).toEqual({ x: 0, y: 0 });
     expect(positions[output]).toEqual({ x: 1010, y: 0 });
     expect(Object.values(layout(['a', 'b'], [{ source: 'a', target: 'b' }, { source: 'b', target: 'a' }]).positions).every(p => Number.isFinite(p.x))).toBe(true);
+  });
+});
+
+describe('adding a step where you are working', () => {
+  const catalog: Description[] = [
+    { name: 'text.join', inputs: { parts: 'text', sep: 'text' }, outputs: { text: 'text', count: 'number' } },
+    { name: 'generic', inputs: { a: 'text', b: 'text' }, workflow: { outputs: { value: '', other: '' } } },
+  ];
+  const flow: Workflow = { inputs: { word: 'text' }, steps: { a: { use: 'text.join', in: { list: ['x', 'y'] } } }, outputs: { out: '' } };
+  const names = (list: { source: (string | number)[]; target: (string | number)[]; port: string }[]) => list.map(item => [item.source.join('.'), item.target.join('.'), item.port]);
+
+  it('offers the new step\'s inputs after a source, in the order its card shows them', () => {
+    expect(names(candidates('join', catalog[0], { type: 'source', path: ['a', 'text'] }))).toEqual([['a.text', 'steps.join.in.parts', 'parts'], ['a.text', 'steps.join.in.sep', 'sep']]);
+    expect(names(candidates('join', catalog[0], { type: 'source', path: ['inputs', 'word'] }))[0]).toEqual(['inputs.word', 'steps.join.in.parts', 'parts']);
+  });
+
+  it('offers its outputs for the exact target path, including nested paths and saved workflow outputs', () => {
+    expect(names(candidates('join', catalog[0], { type: 'target', path: ['steps', 'a', 'in', 'list', 1] }))).toEqual([['join.text', 'steps.a.in.list.1', 'text'], ['join.count', 'steps.a.in.list.1', 'count']]);
+    expect(names(candidates('g', catalog[1], { type: 'target', path: ['outputs', 'out'] }))).toEqual([['g.value', 'outputs.out', 'value'], ['g.other', 'outputs.out', 'other']]);
+    expect(candidates('none', {}, { type: 'target', path: ['outputs', 'out'] })).toEqual([]);
+  });
+
+  it('orders with after in either direction', () => {
+    expect(names(candidates('n', catalog[0], { type: 'source', path: ['a'] }))).toEqual([['a', 'steps.n.after', 'after']]);
+    expect(names(candidates('n', catalog[0], { type: 'target', path: ['steps', 'a', 'after'] }))).toEqual([['n', 'steps.a.after', 'after']]);
+  });
+
+  it('builds one workflow per candidate with exactly one new connection', () => {
+    const result = extend(flow, 'generic', { x: 5, y: 6 }, { type: 'source', path: ['inputs', 'word'] }, catalog);
+    expect(result.name).toBe('generic');
+    expect(result.workflow.steps!.generic).toEqual({ use: 'generic' });
+    expect(result.workflow.view!.positions[handle(['steps', 'generic'])]).toEqual({ x: 5, y: 6 });
+    expect(result.tries.map(item => item.workflow.steps!.generic)).toEqual([{ use: 'generic', in: { a: '=inputs.word' } }, { use: 'generic', in: { b: '=inputs.word' } }]);
+    expect(result.tries.map(item => item.path)).toEqual([['steps', 'generic', 'in', 'a'], ['steps', 'generic', 'in', 'b']]);
+    const back = extend({ ...flow, steps: { ...flow.steps, b: { use: 'text.join', after: ['a'] } } }, 'generic', { x: 0, y: 0 }, { type: 'target', path: ['steps', 'b', 'after'] }, catalog);
+    expect(back.tries.map(item => item.workflow.steps!.b.after)).toEqual([['a', 'generic']]);
+  });
+
+  it('keeps the popup, capped to a small canvas, inside it without moving the insertion point', () => {
+    const view = { x: 100, y: 50, zoom: 2 }, inside = (box: ReturnType<typeof place>, width: number, height: number) => box.left >= 0 && box.top >= 0 && box.left + box.width <= width && box.top + box.maxHeight <= height;
+    expect(place({ x: 10, y: 20 }, view, 1000, 800)).toEqual({ left: 120, top: 90, width: quick.width, maxHeight: quick.height });
+    for (const [at, width, height] of [[{ x: 500, y: 500 }, 1000, 800], [{ x: -200, y: -200 }, 1000, 800], [{ x: 5, y: 5 }, 100, 100], [{ x: 40, y: 40 }, 500, 280]] as const) {
+      expect(inside(place(at, view, width, height), width, height)).toBe(true);
+    }
+    expect(place({ x: 5, y: 5 }, view, 100, 100)).toMatchObject({ left: 0, top: 0, width: 100, maxHeight: 100 });
+    expect(place({ x: 500, y: 500 }, view, 1000, 800)).toMatchObject({ left: 1000 - quick.width, top: 800 - quick.height });
   });
 });
 

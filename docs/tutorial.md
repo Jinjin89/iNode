@@ -46,7 +46,7 @@ The step returns `HI`. You are now looking at a **run**, a read-only record.
 - In `parts`, click **Add item** twice.
 - Type `Hello` in the first row.
 - Drag a line from the first step's `text` output to the second row's dot.
-- Add a second `text.upper`.
+- Add a second `text.upper` (press `/` to search for it).
 - Connect `text.join`'s output to the last step's `text` input.
 - Press **Run**.
 - Click a step to see **Received** and **Returned**.
