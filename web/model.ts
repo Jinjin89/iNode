@@ -293,6 +293,14 @@ export function reveal(box: { left: number; right: number; top: number; bottom: 
   return { x: shift(box.left, box.right, frame.left, frame.right), y: shift(box.top, box.bottom, frame.top, frame.bottom) };
 }
 
+export function neighbour(nodes: { id: string; position: { x: number; y: number } }[], selected: string | undefined, key: string): string | undefined {
+  const origin = nodes.find(node => node.id === selected)?.position;
+  if (!origin) return nodes[0]?.id;
+  const axis = key === 'ArrowLeft' || key === 'ArrowRight' ? 'x' : 'y', sign = key === 'ArrowLeft' || key === 'ArrowUp' ? -1 : 1;
+  const distance = (node: typeof nodes[number]) => Math.hypot(node.position.x - origin.x, node.position.y - origin.y);
+  return nodes.filter(node => (node.position[axis] - origin[axis]) * sign > 0).sort((a, b) => distance(a) - distance(b))[0]?.id;
+}
+
 export function layout(
   ids: string[], edges: { source: string; target: string }[],
   stored: Record<string, { x: number; y: number }> = {},
@@ -391,9 +399,10 @@ const shortcutTable: Record<string, [string, string, string][]> = {
   'Move around': [
     ['pan', 'Space drag / Middle drag', 'Pan'], ['scroll', 'scroll / Shift scroll', 'Pan, or pan sideways'], ['pinch', 'Mod scroll / pinch', 'Zoom'],
     ['zoomIn', '+ / =', 'Zoom in'], ['zoomOut', '-', 'Zoom out'], ['fit', 'Shift Digit1', 'Fit the whole workflow'], ['fitSelected', 'Shift Digit2', 'Fit the selected steps'],
+    ['walk', 'ArrowLeft / ArrowRight / ArrowUp / ArrowDown', 'Select the next step'], ['screen', 'Digit1 / Digit2 / Digit3 / Digit4 / Digit5', 'Switch screens: Canvas, Runs, When, Plugins, Secrets'],
   ],
   'Select and edit': [
-    ['all', 'Mod A', 'Select all steps'], ['close', 'Escape', 'Close the open step or clear the selection'], ['delete', 'Delete / Backspace', 'Delete the selected steps or connection'],
+    ['all', 'Mod A', 'Select all steps'], ['close', 'Escape', 'Close or go back one step'], ['delete', 'Delete / Backspace', 'Delete the selected steps or connection'],
     ['rename', 'F2', 'Rename the selected step'], ['copy', 'Mod C', 'Copy the selected steps'], ['cut', 'Mod X', 'Cut the selected steps'], ['paste', 'Mod V', 'Paste steps'],
     ['group', 'Mod G', 'Make a node'], ['undo', 'Mod Z', 'Undo'], ['redo', 'Mod Shift Z / Mod Y', 'Redo'],
   ],
@@ -413,6 +422,9 @@ export function shortcut(event: KeyEvent, typed = false, mac = isMac): string | 
   }))?.id;
 }
 
-export const keysText = (row: { keys: string[] }, mac = isMac): string => row.keys.map(keys => keys.split(' ').map(part => part === 'Mod' ? mac ? '⌘' : 'Ctrl' : part.replace('Digit', '')).join('+')).join(' / ');
-export const tip = (id: string, label?: string, mac = isMac): string => { const row = shortcuts.find(row => row.id === id)!; return (label ?? row.label) + ' (' + keysText(row, mac) + ')'; };
+export function keysText(row: { keys: string[] }, mac = isMac): string {
+  const keys = row.keys.map(keys => keys.split(' ').map(part => part === 'Mod' ? mac ? '⌘' : 'Ctrl' : ({ ArrowLeft: '←', ArrowRight: '→', ArrowUp: '↑', ArrowDown: '↓' } as Values)[part] ?? part.replace('Digit', '')).join('+'));
+  return keys.join(keys.every(key => key.length === 1) ? '/' : ' / ');
+}
+export const tip = (id: string, label?: string, mac = isMac, index?: number): string => { const row = shortcuts.find(row => row.id === id)!; return (label ?? row.label) + ' (' + keysText({ keys: index === undefined ? row.keys : [row.keys[index]] }, mac) + ')'; };
 export const findShortcuts = (query: string, mac = isMac) => shortcuts.filter(row => (row.label + ' ' + keysText(row, mac)).toLowerCase().includes(query.trim().toLowerCase()));

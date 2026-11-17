@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { add, box, candidates, extend, place, quick, canReference, connect, connectionProblem, content, copyText, commandText, duration, emptyReport, emptyValue, expose, copy, paste, clipboard, shortcut, shortcuts, findShortcuts, keysText, tip, filterRuns, graph, group, groups, handle, history, inputValues, kind, move, parseHandle, layout, reference, rename, runMessages, runTrail, runWorkflow, reveal, set, textPreview, type, workflowDescription, fileInput, fileLabel, fileValue, type Workflow, type Description, type Reference, type History, type Run } from './model';
+import { add, box, candidates, extend, place, quick, canReference, connect, connectionProblem, content, copyText, commandText, duration, emptyReport, emptyValue, expose, copy, paste, clipboard, shortcut, shortcuts, findShortcuts, keysText, tip, filterRuns, graph, group, groups, handle, history, inputValues, kind, move, parseHandle, layout, reference, rename, runMessages, runTrail, runWorkflow, reveal, neighbour, set, textPreview, type, workflowDescription, fileInput, fileLabel, fileValue, type Workflow, type Description, type Reference, type History, type Run } from './model';
 
 it('shows literal program arguments as a command with safe quoting', () => {
   expect(commandText(['python3', 'counter.py'])).toBe('python3 counter.py');
@@ -434,6 +434,29 @@ describe('canvas building', () => {
   });
 });
 
+describe('neighbour', () => {
+  const nodes = Object.entries({ centre: [0, 0], left: [-200, 0], right: [200, 0], up: [0, -200], down: [0, 200], far: [300, 300] })
+    .map(([id, [x, y]]) => ({ id, position: { x, y } }));
+  it('selects the first step without a current step, including a stale selection', () => {
+    expect(neighbour([], undefined, 'ArrowRight')).toBeUndefined();
+    expect(neighbour(nodes, undefined, 'ArrowLeft')).toBe('centre');
+    expect(neighbour(nodes, 'gone', 'ArrowDown')).toBe('centre');
+  });
+  it('takes the nearest step strictly in each direction and stops at the edge', () => {
+    for (const direction of ['Left', 'Right', 'Up', 'Down']) expect(neighbour(nodes, 'centre', 'Arrow' + direction)).toBe(direction.toLowerCase());
+    expect(neighbour(nodes, 'left', 'ArrowLeft')).toBeUndefined();
+    expect(neighbour(nodes, 'up', 'ArrowUp')).toBeUndefined();
+  });
+  it('uses distance for diagonals, breaks ties in node order and never changes positions', () => {
+    const diagonal = [...nodes, { id: 'near', position: { x: 1, y: 2 } }, { id: 'tie', position: { x: 1, y: 2 } }, { id: 'overlap', position: { x: 0, y: 0 } }];
+    const before = structuredClone(diagonal);
+    expect(neighbour(diagonal, 'centre', 'ArrowRight')).toBe('near');
+    expect(neighbour(diagonal, 'centre', 'ArrowDown')).toBe('near');
+    expect(diagonal).toEqual(before);
+    expect(neighbour(diagonal.slice(-1), 'overlap', 'ArrowDown')).toBeUndefined();
+  });
+});
+
 describe('layout', () => {
   const input = handle(['inputs']), output = handle(['outputs']);
   it('puts boundaries on either side and steps by dependency depth, including disconnected steps', () => {
@@ -544,7 +567,7 @@ describe('shortcuts', () => {
   it('matches the physical key for digits and the typed character for symbols', () => {
     expect(shortcut(key('!', { code: 'Digit1', shiftKey: true }))).toBe('fit');
     expect(shortcut(key('&', { code: 'Digit1', shiftKey: true }))).toBe('fit');
-    expect(shortcut(key('1', { code: 'Digit1' }))).toBeUndefined();
+    expect(shortcut(key('1', { code: 'Digit1' }))).toBe('screen');
     expect(shortcut(key('@', { code: 'Digit2', shiftKey: true }))).toBe('fitSelected');
     expect(shortcut(key('?', { shiftKey: true }))).toBe('help');
     expect(shortcut(key('+', { shiftKey: true }))).toBe('zoomIn');
@@ -559,6 +582,17 @@ describe('shortcuts', () => {
     expect(shortcut(key('z', { ctrlKey: true }), true, false)).toBeUndefined();
     expect(['s', 'Enter'].map(name => shortcut(key(name, { ctrlKey: true }), true, false))).toEqual(['save', 'run']);
     expect(shortcut(key('Escape'), true)).toBe('close');
+    for (const direction of ['Left', 'Right', 'Up', 'Down']) {
+      expect(shortcut(key('Arrow' + direction))).toBe('walk');
+      expect(shortcut(key('Arrow' + direction), true)).toBeUndefined();
+      expect(shortcut(key('Arrow' + direction, { shiftKey: true }))).toBeUndefined();
+    }
+    for (const digit of ['1', '2', '3', '4', '5']) {
+      expect(shortcut(key(digit, { code: 'Digit' + digit }))).toBe('screen');
+      expect(shortcut(key(digit, { code: 'Digit' + digit }), true)).toBeUndefined();
+      expect(shortcut(key(digit, { code: 'Digit' + digit, ctrlKey: true }), false, false)).toBeUndefined();
+    }
+    expect(shortcut(key('6', { code: 'Digit6' }))).toBeUndefined();
     expect(shortcut(key('Delete'))).toBe('delete');
   });
 
@@ -566,6 +600,10 @@ describe('shortcuts', () => {
     expect(tip('save', undefined, false)).toBe('Save (Ctrl+S)');
     expect(tip('redo', undefined, true)).toBe('Redo (⌘+Shift+Z / ⌘+Y)');
     expect(keysText(shortcuts.find(row => row.id === 'fit')!)).toBe('Shift+1');
+    expect(keysText(shortcuts.find(row => row.id === 'walk')!)).toBe('←/→/↑/↓');
+    expect(keysText(shortcuts.find(row => row.id === 'screen')!)).toBe('1/2/3/4/5');
+    expect(tip('screen', 'Runs', false, 1)).toBe('Runs (2)');
+    expect(tip('close')).toBe('Close or go back one step (Escape)');
     expect(new Set(shortcuts.map(row => row.id)).size).toBe(shortcuts.length);
   });
 
