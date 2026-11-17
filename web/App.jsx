@@ -1,5 +1,5 @@
 import { useEffect, useReducer, useRef, useState } from 'react';
-import { Canvas, Dialog, Field, ownsPage, useReply, useShortcuts } from './Canvas';
+import { Canvas, Dialog, Field, owner, ownsPage, useReply, useShortcuts } from './Canvas';
 import { call, op } from './client';
 import { content, emptyReport, history, inputValues, findShortcuts, keysText, runMessages, runTrail, runWorkflow, set, tip, workflowDescription } from './model';
 import { When } from './When';
@@ -20,6 +20,7 @@ function Source({ source, showRun, fail }) {
 
 const empty = { inputs: {}, steps: {}, outputs: {} };
 const editor = ':is(.canvas-layout[data-editable], .box-editor)';
+const screens = ['Canvas', 'Runs', 'When', 'Plugins', 'Secrets'];
 
 export function App() {
   const [catalog, setCatalog] = useState([]);
@@ -142,6 +143,7 @@ export function App() {
   }, [runRequest, checked, workflow, screen]);
   const showRun = (id, editor = null) => { setPreview(null); setReturnRun(''); setPendingSource(null); setRunPath([]); setFromEditor(editor === latest.current.opened.key); setEnterInputs(false); setRecord(previous => previous?.id === id ? previous : null); setRunId(id); setScreen('Canvas'); };
   const backToEditing = () => {
+    if (pending.includes('open')) return;
     if (fromEditor || !record?.workflow) { setRunId(''); setRecord(null); }
     else if (!record.unsaved) perform(() => open(record.node, record.id), 'open');
     else leave(() => replace({ name: '', version: '', workflow: record.workflow }, record.id));
@@ -158,8 +160,19 @@ export function App() {
     return () => window.removeEventListener('beforeunload', warn);
   }, []);
   const idle = () => screen === 'Canvas' && !runId && ownsPage();
+  const navigate = name => { if (valid()) setScreen(name); };
   const press = action => { document.activeElement?.blur(); requestAnimationFrame(action); };
   useShortcuts({
+    close: (event, typed) => {
+      if (owner()) return false;
+      if (typed) event.target.blur();
+      else if (error) setError('');
+      else if (guide) setGuide(false);
+      else if (screen === 'Canvas' && enterInputs) setEnterInputs(false);
+      else if (screen === 'Canvas' && runId) { if (runPath.length) setRunPath(runPath.slice(0, -1)); else backToEditing(); }
+      else return false;
+    },
+    screen: event => { if (owner()) return false; navigate(screens[Number(event.code.slice(-1)) - 1]); },
     save: () => { if (idle()) press(() => saveButton.current?.click()); },
     run: () => { if (idle()) press(() => runButton.current?.form ? runButton.current.form.requestSubmit() : runButton.current?.click()); },
     undo: () => { if (idle() && !enterInputs) press(() => dispatch({ type: 'undo' })); else return false; },
@@ -168,14 +181,11 @@ export function App() {
   });
   return <main>
     <header className="app-header"><a className="brand" href="#" onClick={event => event.preventDefault()}>iNode<span>Local workflows</span></a>
-      <nav>{['Canvas', 'Runs', 'When', 'Plugins', 'Secrets'].map(name => <button key={name} className={screen === name ? 'active' : 'quiet'} onClick={() => {
-        if (!valid()) return;
-        setScreen(name);
-      }}>{name}</button>)}</nav>
+      <nav>{screens.map((name, index) => <button key={name} title={tip('screen', name, undefined, index)} className={screen === name ? 'active' : 'quiet'} onClick={() => navigate(name)}>{name}</button>)}</nav>
       <div className="row"><button className="help-toggle quiet" title={tip('help')} onClick={() => setKeys(true)}>Shortcuts</button>
         <button className={guide ? 'active' : 'quiet'} aria-expanded={!!guide} onClick={() => setGuide(!guide)}>Guide</button></div>
     </header>
-    {error && !naming && <div className="notice problem" role="alert">{error}<button className="quiet" onClick={() => setError('')} title="Close"><Icon name="close" />Close</button></div>}
+    {error && !naming && <div className="notice problem" role="alert">{error}<button className="quiet" onClick={() => setError('')} title={tip('close', 'Close')}><Icon name="close" />Close</button></div>}
     <div className="page-content">{screen === 'Canvas' ? <div className="workspace">
       <section className="work"><div className={'toolbar ' + (runId ? 'run-bar' : '')}>
         {runId ? <>
@@ -188,7 +198,7 @@ export function App() {
             {shown && <small>{shown.started ? 'Started ' + new Date(shown.started).toLocaleString() : 'Not started'}</small>}</div>
           <span className={'state ' + shown?.state}>{shown?.state}</span>
           {shown && <Duration record={shown} />}
-          <button className="primary" disabled={pending.includes('open')} onClick={backToEditing}>Back to editing</button>
+          <button className="primary" title={tip('close', 'Back to editing')} disabled={pending.includes('open')} onClick={backToEditing}>Back to editing</button>
           {!runPath.length && <>
           {record && record.state !== 'running' && record.state !== 'waiting' && <button disabled={pending.includes('again')} onClick={() => perform(async () => {
             for await (const id of call(op['runs again'], record.id)) showRun(id, fromEditor ? opened.key : null);
@@ -231,7 +241,7 @@ export function App() {
             </div>;
           })}</div>
           <div className="row"><button ref={runButton} type="submit" className="primary" disabled={runDisabled} title={tip('run', runReason || 'Start run')}><Icon name="run" />{pending.includes('run') ? 'Starting…' : 'Start run'}</button>
-            <button type="button" onClick={() => setEnterInputs(false)}>Cancel</button></div>
+            <button type="button" title={tip('close', 'Cancel')} onClick={() => setEnterInputs(false)}>Cancel</button></div>
         </form>}
         {shown?.error && <div className="notice problem">{shown.error}</div>}
         <Source source={shown?.source} showRun={showRun} fail={setError} />
@@ -249,7 +259,7 @@ export function App() {
       <Plugins sources={help.sources} catalog={catalog} setCatalog={setCatalog} perform={perform} pending={pending} ask={ask} fail={setError} log={installLog} setLog={setInstallLog} changed={pluginChanges} setChanged={setPluginChanges} draft={pluginDraft} setDraft={setPluginDraft} showSecrets={() => setScreen('Secrets')} />}
     {guide && <Guide text={help.tutorial} onClose={() => setGuide(false)} />}</div>
     {preview && <Dialog className="box-editor" label="Run from here preview" onClose={() => setPreview(null)}>
-        <div className="toolbar"><strong>Run from here</strong><button disabled={pending.includes('from')} onClick={() => from(preview.source.step, true)}>Start run</button><button disabled={pending.includes('from')} onClick={() => setPreview(null)}>Back</button></div>
+        <div className="toolbar"><strong>Run from here</strong><button disabled={pending.includes('from')} onClick={() => from(preview.source.step, true)}>Start run</button><button title={tip('close', 'Back')} disabled={pending.includes('from')} onClick={() => setPreview(null)}>Back</button></div>
         <Source source={preview.source} showRun={showRun} fail={setError} />
         {error && <p className="notice problem">{error}</p>}
         <Canvas workflow={preview.workflow} catalog={catalog} record={preview} />
@@ -260,11 +270,11 @@ export function App() {
     {naming && <Dialog className="run-inputs" label="Save workflow" onClose={() => { if (!pending.includes('save')) setNaming(null); }}><form onSubmit={event => { event.preventDefault(); write(name); }}>
       <h2>Save workflow</h2><label>Name<input aria-label="Workflow name" autoFocus required disabled={pending.includes('save')} value={name} onChange={event => setName(event.target.value)} /></label>
       {error && <p className="problem" role="alert">{error}</p>}
-      <div className="row"><button type="button" disabled={pending.includes('save')} onClick={() => setNaming(null)}>Cancel</button><button className="primary" type="submit" disabled={pending.includes('save')}>{pending.includes('save') ? 'Saving…' : 'Save'}</button></div>
+      <div className="row"><button type="button" title={tip('close', 'Cancel')} disabled={pending.includes('save')} onClick={() => setNaming(null)}>Cancel</button><button className="primary" type="submit" disabled={pending.includes('save')}>{pending.includes('save') ? 'Saving…' : 'Save'}</button></div>
     </form></Dialog>}
     {confirmation && <Dialog className="run-inputs" label={confirmation.title} onClose={() => setConfirmation(null)}>
       <h2>{confirmation.title}</h2><div>{confirmation.message}</div>
-      <div className="row"><button autoFocus onClick={() => setConfirmation(null)}>{confirmation.cancel}</button><button className="primary" onClick={() => { const action = confirmation.action; setConfirmation(null); action(); }}>{confirmation.label}</button></div>
+      <div className="row"><button autoFocus title={tip('close', confirmation.cancel)} onClick={() => setConfirmation(null)}>{confirmation.cancel}</button><button className="primary" onClick={() => { const action = confirmation.action; setConfirmation(null); action(); }}>{confirmation.label}</button></div>
     </Dialog>}
   </main>;
 }

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import { Background, ControlButton, Controls, Handle, Position, ReactFlow, ReactFlowProvider, applyNodeChanges, getNodesBounds, getViewportForBounds, useKeyPress, useStore, useReactFlow, useUpdateNodeInternals } from '@xyflow/react';
-import { add, content, graph, group, handle, parseHandle, problems, rename, set, type, kind, box, inputs as nodeInputs, reference, connect, emptyReport, emptyValue, expose, move, groups, connectionProblem, unique, workflowDescription, nodeName, reveal, cardGeometry, fileInput, fileLabel, fileValue, copy, paste, clipboard, shortcut, tip, created, extend, place } from './model';
+import { add, content, graph, group, handle, parseHandle, problems, rename, set, type, kind, box, inputs as nodeInputs, reference, connect, emptyReport, emptyValue, expose, move, groups, connectionProblem, unique, workflowDescription, nodeName, reveal, cardGeometry, fileInput, fileLabel, fileValue, copy, paste, clipboard, shortcut, tip, created, extend, place, neighbour } from './model';
 import { call, op } from './client';
 import { Duration, Value } from './Value';
 import { Icon } from './Icon';
@@ -58,15 +58,17 @@ const watchers = new Set(), watch = watcher => { watchers.add(watcher); return (
 export const owner = () => [...document.querySelectorAll('dialog[open]')].at(-1) ?? null;
 export const ownsPage = () => !owner() || !!owner().querySelector('.canvas-layout[data-editable]');
 
-export function useShortcuts(handlers, own = () => true) {
+export function useShortcuts(handlers, own) {
   useEffect(() => {
     const key = event => {
-      if (event.defaultPrevented || !own()) return;
-      const act = handlers[shortcut(event, !!event.target.closest('input, textarea, select, [contenteditable]'))];
-      if (act && act(event) !== false) event.preventDefault();
+      if (event.defaultPrevented || own && !own()) return;
+      const typed = !!event.target.closest('input, textarea, select, [contenteditable]'), act = handlers[shortcut(event, typed)];
+      if (act && act(event, typed) !== false) event.preventDefault();
     };
-    window.addEventListener('keydown', key);
-    return () => window.removeEventListener('keydown', key);
+    // A key bubbles to document before window, so a canvas answers before the page.
+    const target = own ? document : window;
+    target.addEventListener('keydown', key);
+    return () => target.removeEventListener('keydown', key);
   });
 }
 
@@ -463,7 +465,8 @@ function CanvasView({ workflow, catalog, onEdit, record, onFrom, onCall, onOpen,
     if (done !== undefined) { select({ ids: [handle(['steps', added.name])] }); leave(); }
   };
   useShortcuts({
-    close: () => { if (pendingSource) onConnected(); else if (selected.ids.length) choose({}); else return false; },
+    close: (event, typed) => { if (typed) event.target.blur(); else if (pendingSource) onConnected(); else if (selected.ids.length) choose({}); else return false; },
+    walk: event => { const next = neighbour(derived.nodes.filter(node => node.data.kind === 'step'), selectedId, event.key); if (next) choose({ ids: [next] }); else return false; },
     delete: () => { if (onEdit && (names.length || derived.edges.some(edge => edge.id === selectedId))) remove(); else return false; },
     all: () => choose({ ids: Object.keys(workflow.steps || {}).map(id => handle(['steps', id])) }),
     rename: () => { if (onEdit && name) choose({ ids: [selectedId], field: 'name' }); else return false; },
@@ -539,12 +542,12 @@ function CanvasView({ workflow, catalog, onEdit, record, onFrom, onCall, onOpen,
     <div className="canvas-main">
     {!record && error && <p className="notice problem">{error}</p>}
     {notice && !notice.path && <p className="notice problem" role="alert">{notice.message}</p>}
-    {pendingSource && <div className="notice use-value">Use <code>={pendingSource.join('.')}</code> · Choose an input to connect.<button onClick={onConnected}>Cancel (Escape)</button></div>}
+    {pendingSource && <div className="notice use-value">Use <code>={pendingSource.join('.')}</code> · Choose an input to connect.<button title={tip('close', 'Cancel')} onClick={onConnected}>Cancel</button></div>}
     <div className="canvas">
       <div className="drawing" onPointerMove={event => { pointer.current = { x: event.clientX, y: event.clientY }; }} onPointerLeave={() => { pointer.current = null; }} onDragOver={event => { if (onEdit && event.dataTransfer.types.includes(nodeMime)) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; } }}
         onDrop={event => { const name = event.dataTransfer.getData(nodeMime); if (onEdit && name) { event.preventDefault(); addStep(name, flow.screenToFlowPosition({ x: event.clientX, y: event.clientY })); } }}>
         <ReactFlow id={id} tabIndex={-1} nodes={nodes} edges={derived.edges.map(edge => ({ ...edge, selected: edge.id === selectedId }))} nodeTypes={nodeTypes} minZoom={minZoom} maxZoom={maxZoom} className={panning ? 'panning' : undefined} zoomOnDoubleClick={false} selectNodesOnDrag={false} ariaLabelConfig={{ 'controls.zoomIn.ariaLabel': tip('zoomIn', 'Zoom In'), 'controls.zoomOut.ariaLabel': tip('zoomOut', 'Zoom Out') }}
-          nodesDraggable={!!onEdit && !notice?.checking && !panning} nodesConnectable={!!onEdit} deleteKeyCode={null} connectOnClick multiSelectionKeyCode={active ? 'Shift' : null} selectionKeyCode={active ? 'Shift' : null} panActivationKeyCode={active ? 'Space' : null} disableKeyboardA11y={!active}
+          nodesDraggable={!!onEdit && !notice?.checking && !panning} nodesConnectable={!!onEdit} deleteKeyCode={null} connectOnClick multiSelectionKeyCode={active ? 'Shift' : null} selectionKeyCode={active ? 'Shift' : null} panActivationKeyCode={active ? 'Space' : null} disableKeyboardA11y
           onNodeDragStart={() => { drag.current = {}; }} onSelectionDragStart={() => { drag.current = {}; }}
           onNodeClick={(event, node) => { if (!event.shiftKey && node.id !== selectedId && !event.target.closest('.react-flow__handle')) choose({ ids: [node.id] }); }} onPaneClick={() => choose({})}
           onNodesChange={changes => {
