@@ -98,7 +98,7 @@ Trigger definitions are plain files beside the workflows. Whether a trigger is o
 One backend runs per project folder. Browser and command line share capabilities and checks; page, help, stop and plugin status answer during startup, while other work waits for the catalog.
 
 - The frontend is the main way to build. It is generated from node descriptions, so plugins ship no frontend code. An input becomes a field (including file paths), a secret picker, a socket, or a box, by its type.
-- The command line runs nodes, shows runs, and manages triggers and plugins. Workflows are short text files that can be read and edited by hand; that is the advanced route.
+- The command line runs nodes, shows runs, and manages triggers and plugins. Workflows are short text files that can be read and edited by hand; that is the advanced route, and the route an AI agent takes, leaving the page for viewing.
 - A command that needs the project connects to its backend and starts it if none is running. The backend keeps running and says when switched-on triggers start. `inode stop` stops it.
 
 ## Plugins
@@ -173,18 +173,13 @@ outputs: {ok: =sent.ok}
 
 ## Writing a node
 
-A `.node` file in `nodes/<name>.node` declares `doc`, inputs, outputs, optional `no_outside_effect` and `run`. Programs run without a shell. `run` accepts quoted words with `~/` expansion, an argument list, or `{args: [...]}`; shell operations are refused and literal shell characters require quoting or a list.
+A `.node` file in `nodes/<name>.node` declares `doc`, inputs, outputs, optional `no_outside_effect` and `run`. Programs run without a shell: `run` accepts quoted words with `~/` expansion, an argument list, or `{args: [...]}`; shell operations are refused and literal shell characters require quoting or a list. Plugin `setup` uses the same string/list rule.
 
-| Binding | What it does |
-|---|---|
-| `args: [..., =inputs.x]` | One argument per scalar/list item. |
-| `{flag: --name, value: =inputs.x}` | True sends flag; false omits; scalar/list repeats flag/value pairs. |
-| `stdin: =inputs.x` | File bytes or text unchanged; otherwise JSON. |
-| `stdout: count` | One output: file bytes (labelled `count.bin`), text unchanged, otherwise one JSON value. |
-| `env: {TOKEN: =inputs.token}` | Scalars; secrets only here or stdin. |
-| `files: {in.md: =inputs.source, out.html: =outputs.html}` | Stage/collect files under relative names used in args; one producer per output. |
+Without bindings, streams carry JSON objects of all inputs/outputs. Bindings map single inputs and outputs to arguments, flags, streams, environment and files, with one producer per output. Bad bindings fail at load; nonzero exit fails with bounded scrubbed stderr.
 
-Without bindings, streams carry JSON objects of all inputs/outputs. File bindings leave JSON stdout for remaining outputs, or unused when none remain. `files` selects a fresh private folder, removed afterwards; otherwise programs run in the description folder. Bindings of unset inputs are omitted; bad bindings fail at load; nonzero exit fails with bounded scrubbed stderr. Plugin `setup` uses the same string/list rule. `file.save(file, path)` copies a result to disk; text `file.read`/`file.write` stay unchanged. File inputs and file.save paths accept `~/` or start at the project folder. See [file forms](tutorial.md#the-two-file-forms).
+`file.save(file, path)` copies a result to disk; text `file.read`/`file.write` stay unchanged. File inputs and file.save paths accept `~/` or start at the project folder.
+
+Writing files by hand is described once, in [the iNode skill](../skills/inode/SKILL.md): the workflow form with boxes, each binding, what commands print, and triggers. It is written for AI agents, printed by `inode skill`, and serves anyone taking this route; [the tutorial](tutorial.md#the-two-file-forms) shows the smallest of each file.
 
 ## Limits
 

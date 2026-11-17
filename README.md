@@ -24,7 +24,11 @@ inode start
 
 Follow [the one-page tutorial](docs/tutorial.md) in the browser's **Guide** or with `inode help`: connect steps, run them, save your own node, put it in a box and schedule it. It also shows the workflow and program-node file forms.
 
-For AI agents: [the iNode skill](skills/inode/SKILL.md).
+For AI agents: `inode skill` prints [the guide](skills/inode/SKILL.md) an agent follows to build, run and schedule workflows from files and the command line, so the page is only for viewing. Tell your agent to run it, or install it where the agent looks for skills, for example for Claude Code:
+
+```sh
+mkdir -p ~/.claude/skills/inode && inode skill > ~/.claude/skills/inode/SKILL.md
+```
 
 ## Everyday commands
 

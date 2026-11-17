@@ -38,7 +38,7 @@ Rules that hold the parts together:
 - **One checker.** It owns workflow structure, types, input constraints, cycles and "no outside effect" inference. The backend also rejects invalid program bindings when loading descriptions. After each edit the frontend sends the workflow, saved or not, and draws the answer: problems, references (canvas lines), and typed ports. Plugins validate their operations at run time.
 - **One entry to the runner: start a run of a node.** A press of Run, a command, a trigger event, a plugin's call and "try this node alone" all arrive the same way. Run from here is the same entry, given an inline workflow made of the selected steps with the copied values as its inputs; the new run's record links to the run and step it came from.
 - **The runner executes a checked snapshot.** It runs the definitions as they were when checked, and does not look up definitions that may change during the run. The snapshot is kept with the record.
-- **A node is performed by one of two things.** The runner performs workflows; a plugin performs everything else. Program descriptions and setup share one process launcher and process-group cancellation; bindings are in `design.md`.
+- **A node is performed by one of two things.** The runner performs workflows; a plugin performs everything else. Program descriptions and setup share one process launcher and process-group cancellation; bindings are in the skill (`skills/inode/SKILL.md`).
 - **Waiting does not block children.** A run waiting on child runs does not occupy a scheduler execution slot needed by those children.
 - **Values are checked at the edges.** Checker and runner share one type tree; runtime checks enforce the value rules in `design.md`.
 - **Records form a tree.** Each run records its node, inputs, parent run, and for every step its state (waiting, running, done, failed, interrupted), what it received and what it returned. Data is stored as is, files by reference to unchanged contents, secrets by name, live objects as a placeholder.
@@ -88,10 +88,10 @@ A thin client of the same interface.
 | `inode trigger add <kind> key=value run=<node> key=value` | adds a trigger, which starts off and is given a name such as `schedule.daily-1` |
 | `inode trigger list/on/off/clear/remove` | lists triggers and what each does, switches one on or off, clears its waiting events, removes it |
 | `inode secret set <name>`, `inode secret list/remove` | stores a secret, asking for the value without showing it or reading it from standard input, never from the command line; lists names; removes one |
-| `inode search`, `inode add <plugin>` | finds and installs plugins |
+| `inode search`, `inode add <plugin>` | finds and installs plugins; `add` asks what the page's inspection form asks, or takes the answers as one JSON object |
 | `inode start`, `inode stop` | starts the backend and opens the frontend; stops the backend |
 
-- Commands that need the project connect to its backend and start it if none is running. Help, version and shell completion do not start it, and `inode stop` never starts one in order to stop it.
+- Commands that need the project connect to its backend and start it if none is running. Help, version, shell completion and `inode skill`, which prints the embedded guide for AI agents (`skills/inode/SKILL.md`), do not start it, and `inode stop` never starts one in order to stop it.
 - A backend started by a command keeps running. The command says that it started it, when switched-on triggers start, and how to stop it.
 - Problems from the checker are printed in the same words the frontend shows.
 

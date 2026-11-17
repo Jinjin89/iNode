@@ -46,14 +46,21 @@ func TestCommandPluginConfirmation(t *testing.T) {
 	if _, err := os.Stat("python3"); !os.IsNotExist(err) {
 		t.Fatal("inspection wrote a source folder")
 	}
-	if _, _, err := call([]string{"add", source}, "declined\n\nn\n"); err != nil {
-		t.Fatal(err)
+	if _, diag, err := call([]string{"add", source}, "declined\n\nn\n"); err != nil || !strings.HasSuffix(diag, "Install plugin? [y/N]: not installed\n") {
+		t.Fatalf("declining says nothing was installed: %s, %v", diag, err)
 	}
 	if _, err := os.Stat("declined"); !os.IsNotExist(err) {
 		t.Fatal("declining wrote a source folder")
 	}
 	if _, err := os.Stat("plugins"); !os.IsNotExist(err) {
 		t.Fatal("installed before confirmation")
+	}
+	answers, _ := json.Marshal(inode.Values{"kind": "command", "source": source, "name": "answered"})
+	if text, diag, err = call([]string{"add", string(answers)}, ""); err != nil || diag != "" || !strings.Contains(text, "answered\t1") {
+		t.Fatalf("answers given as an object install without questions: %s %s, %v", text, diag, err)
+	}
+	if text, diag, err = call([]string{"remove", "answered"}, ""); err != nil {
+		t.Fatalf("remove: %s %s, %v", text, diag, err)
 	}
 	text, diag, err = call([]string{"add", "python3"}, "command\nbare\n\nn\n")
 	if err != nil || !strings.Contains(diag, "MCP server command") || strings.Count(diag, "Plugin name") != 1 || strings.Count(diag, "Source type") != 1 {

@@ -22,7 +22,7 @@ import (
 	"inode"
 )
 
-const usage = "usage: inode run <node> key=value ... | nodes | show <node> | check <workflow or JSON> | save <workflow> <version> <JSON> | runs [show|stop|follow|again <id>] | runs from <id> <step> [--start] | trigger add <kind> key=value ... run=<node> key=value ... | trigger list/on/off/remove/clear [name] | secret set <name> (prompt or stdin; one trailing line ending removed) | secret list | secret remove <name> | add <plugin source> | remove <plugin> | plugins [inspect <plugin source>] | start | stop | help | version"
+const usage = "usage: inode run <node> key=value ... | nodes | show <node> | check <workflow or JSON> | save <workflow> <version> <JSON> | runs [show|stop|follow|again <id>] | runs from <id> <step> [--start] | trigger add <kind> key=value ... run=<node> key=value ... | trigger list/on/off/remove/clear [name] | secret set <name> (prompt or stdin; one trailing line ending removed) | secret list | secret remove <name> | add <plugin source or its answers as JSON> | remove <plugin> | plugins [inspect <plugin source>] | start | stop | help | skill (the guide for AI agents) | version"
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -44,6 +44,9 @@ func command(ctx context.Context, args []string, out, diagnostic io.Writer) erro
 		switch args[0] {
 		case "help", "--help", "-h":
 			_, err := fmt.Fprint(out, inode.Help(), "\n", usage, "\n")
+			return err
+		case "skill":
+			_, err := fmt.Fprint(out, inode.Skill())
 			return err
 		case "version", "--version":
 			_, err := fmt.Fprintln(out, "inode dev")
@@ -138,12 +141,15 @@ func command(ctx context.Context, args []string, out, diagnostic io.Writer) erro
 		}
 		arguments = append(arguments, secret)
 	}
+	// A source written as an object already holds the answers, as plugins inspect lists them, so nothing is asked.
 	if operation == "add" {
-		source, err := confirmPlugin(ctx, client, arguments[0], out, diagnostic)
-		if err != nil || source == nil {
-			return err
+		if _, text := arguments[0].(string); text {
+			source, err := confirmPlugin(ctx, client, arguments[0], out, diagnostic)
+			if err != nil || source == nil {
+				return err
+			}
+			arguments[0] = source
 		}
-		arguments[0] = source
 	}
 	err = client.Call(ctx, operation, arguments, func(data json.RawMessage) error {
 		columns := map[string][]func(any) any{
@@ -246,6 +252,7 @@ func confirmPlugin(ctx context.Context, client *inode.Client, source any, out, d
 			data, _ := json.MarshalIndent(prepared.Manifest, "", "  ")
 			fmt.Fprintln(out, string(data))
 			if answer := ask("Install plugin? [y/N]", nil); answer != "y" && answer != "yes" {
+				fmt.Fprintln(diagnostic, "not installed")
 				return nil, reader.Err()
 			}
 			break

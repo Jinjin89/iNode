@@ -72,6 +72,10 @@ func TestHelp(t *testing.T) {
 			t.Fatalf("help: %s; %s", &out, &diagnostic)
 		}
 	}
+	var out bytes.Buffer
+	if err := invokeCLI(context.Background(), []string{"skill"}, &out, &bytes.Buffer{}); err != nil || out.String() != inode.Skill() || !strings.Contains(out.String(), "name: inode") {
+		t.Fatalf("skill: %s; %v", &out, err)
+	}
 	if _, err := os.Stat(".inode"); !os.IsNotExist(err) {
 		t.Fatal("help touched the project")
 	}
