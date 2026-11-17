@@ -149,7 +149,7 @@ steps:
 outputs: {text: =upper.text}
 ```
 
-A `.node` file turns a program into a node. Here `wc -w` counts words in `text`, returning `count`. Without `stdin`/`stdout`, programs read all inputs as one JSON object and print all outputs as one.
+A `.node` file turns a program into a node. Here `wc -w` counts words in `text`, returning `count`. Without `stdin`/`stdout`, programs read all inputs as one JSON object and print all outputs as one. `inode skill` prints the full guide to both forms.
 ```yaml
 # nodes/word_count.node
 doc: Count words.
