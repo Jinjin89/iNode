@@ -2,6 +2,43 @@
 
 A local, self-hosted workflow tool with a browser editor and a command line.
 
+## At a glance
+
+What you see of iNode, and what sits beneath it. The deeper the level, the fewer people need its words.
+
+```text
+                                     /\
+                                    /  \
+                                   /    \
+                                  /      \
+                                 /        \
+                                /  iNode   \
+                               /            \
+                              /   workflow   \                                  what you see
+                             /                \
+                            /                  \
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~    the waterline
+                         /                        \
+                       /    node · run · trigger    \                           1  words you learn
+                     /--------------------------------\
+                   /                                    \
+                 /  step · box · input · output · plugin  \                     2  parts you handle
+               /--------------------------------------------\
+             /                                                \
+           / types · checker · no cycles · run record · secrets \               3  rules that protect you
+         /--------------------------------------------------------\
+       /                                                            \
+     /  catalog · runner · child runs · queue · plugin host · store   \         4  machinery that runs it
+    /------------------------------------------------------------------\
+     \                                                                /
+       \     Node · Port · Record · processes · JSON · SHA-256      /           5  code and disk
+          \                                                      /
+           '-.                                                .-'
+              '--..                                      ..--'
+                   ''--..__                      __..--''
+                           ''---....____....---''
+```
+
 ## Install
 
 Needs Go 1.27 or newer.
